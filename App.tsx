@@ -234,6 +234,10 @@ const App = () => {
                   setAppState(AppState.QUOTA_PAUSED);
                   addLog("API Quota hit. Pausing.", 'WARNING');
                   
+                  // Fix: Ensure we revert the database status as well, not just local state
+                  segment.status = SegmentStatus.PENDING;
+                  await dbService.updateSegment(segment);
+                  
                   // Revert status to PENDING so UI doesn't show it stuck in translating
                   setSegments(prev => {
                       const copy = [...prev];
@@ -514,15 +518,15 @@ const App = () => {
                        <div className="flex items-center bg-slate-100 rounded-lg p-1 mr-2">
                            <button 
                                 onClick={() => setFontType(t => t === 'serif' ? 'sans' : 'serif')} 
-                                className="p-1.5 hover:bg-white rounded shadow-sm text-slate-600"
+                                className="p-1.5 hover:bg-white rounded shadow-sm text-slate-600 transition-colors"
                                 title="Toggle Font Type"
                             >
                                <Type className="w-4 h-4" />
                            </button>
                            <div className="w-px h-4 bg-slate-200 mx-1"></div>
-                           <button onClick={() => setFontSize(s => Math.max(12, s - 2))} className="p-1.5 hover:bg-white rounded shadow-sm text-slate-600"><Minus className="w-3 h-3"/></button>
-                           <span className="text-xs font-mono w-6 text-center text-slate-500">{fontSize}</span>
-                           <button onClick={() => setFontSize(s => Math.min(32, s + 2))} className="p-1.5 hover:bg-white rounded shadow-sm text-slate-600"><Plus className="w-3 h-3"/></button>
+                           <button onClick={() => setFontSize(s => Math.max(12, s - 2))} className="p-1.5 hover:bg-white rounded shadow-sm text-slate-600 transition-colors"><Minus className="w-3 h-3"/></button>
+                           <span className="text-xs font-mono w-6 text-center text-slate-500 select-none">{fontSize}</span>
+                           <button onClick={() => setFontSize(s => Math.min(32, s + 2))} className="p-1.5 hover:bg-white rounded shadow-sm text-slate-600 transition-colors"><Plus className="w-3 h-3"/></button>
                        </div>
 
                        <Button variant="primary" onClick={handleExport} disabled={appState === AppState.TRANSLATING}>
@@ -535,7 +539,7 @@ const App = () => {
               <div className="flex-1 flex flex-col min-h-0 bg-slate-100/50">
                   {/* Split View Area */}
                   <div className="flex-1 overflow-hidden p-6 pb-2">
-                      <div className="max-w-7xl mx-auto h-full shadow-sm">
+                      <div className="max-w-7xl mx-auto h-full shadow-sm bg-white rounded-xl overflow-hidden border border-slate-200">
                           {activeSegment ? (
                               <SplitView 
                                   original={activeSegment.originalHtml} 

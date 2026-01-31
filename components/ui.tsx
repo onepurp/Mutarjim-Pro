@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Loader2, Terminal, CheckCircle2, AlertTriangle, XCircle, Info, X, ChevronRight, ChevronLeft, Maximize2, Minimize2, GripVertical } from 'lucide-react';
-import { Segment, SegmentStatus, SystemLogEntry, LiveLogItem } from '../types';
+import { Loader2, Terminal, AlertTriangle, X, Maximize2, Minimize2, Info, GripVertical } from 'lucide-react';
+import { Segment, SystemLogEntry } from '../types';
 
 // --- Primitives ---
 
@@ -157,27 +157,33 @@ export const SystemLog = ({ logs, isOpen, toggle }: { logs: SystemLogEntry[], is
   }, [logs, isOpen]);
 
   return (
-    <div className={`bg-slate-900 border-t border-slate-800 flex flex-col transition-all duration-300 ${isOpen ? 'h-64' : 'h-9'}`}>
+    <div className={`bg-slate-900 border-t border-slate-800 flex flex-col transition-all duration-300 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-20 ${isOpen ? 'h-64' : 'h-10'}`}>
         <div 
             onClick={toggle}
-            className="h-9 flex items-center justify-between px-4 cursor-pointer hover:bg-slate-800 transition-colors shrink-0"
+            className="h-10 flex items-center justify-between px-4 cursor-pointer hover:bg-slate-800 transition-colors shrink-0 group"
         >
-            <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
-                <Terminal className="w-3.5 h-3.5" />
+            <div className="flex items-center gap-3 text-xs font-mono text-slate-400 group-hover:text-slate-300">
+                <div className={`p-1 rounded ${isOpen ? 'bg-slate-800' : 'bg-slate-800/50'}`}>
+                   <Terminal className="w-3.5 h-3.5" />
+                </div>
                 <span className="font-semibold uppercase tracking-wider">System Console</span>
-                {logs.length > 0 && <span className="bg-slate-800 px-1.5 py-0.5 rounded text-[10px]">{logs.length}</span>}
-                {logs.length > 0 && logs[logs.length-1].type === 'ERROR' && <span className="text-rose-500 flex items-center gap-1"><AlertTriangle className="w-3 h-3"/> Error</span>}
+                {logs.length > 0 && <span className="bg-slate-800 px-1.5 py-0.5 rounded text-[10px] text-slate-500">{logs.length}</span>}
+                {!isOpen && logs.length > 0 && (
+                    <span className="text-slate-600 truncate max-w-[300px] border-l border-slate-700 pl-3 ml-1 opacity-70">
+                        {logs[logs.length-1].message}
+                    </span>
+                )}
             </div>
-            <div className="text-slate-500">
-                {isOpen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            <div className="text-slate-600 group-hover:text-slate-400">
+                {isOpen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </div>
         </div>
 
         {isOpen && (
-            <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-1.5 font-mono text-xs text-slate-300 bg-slate-950">
+            <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-1 font-mono text-xs text-slate-300 bg-slate-950/50">
                 {logs.map((log) => (
-                <div key={log.id} className="flex gap-3 hover:bg-slate-900/50 p-0.5 -mx-2 px-2 rounded">
-                    <span className="text-slate-600 shrink-0 select-none w-16">
+                <div key={log.id} className="flex gap-3 hover:bg-white/5 p-1 rounded-sm transition-colors">
+                    <span className="text-slate-600 shrink-0 select-none w-14 text-right">
                         {new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })}
                     </span>
                     <span className={`break-words flex-1 ${
@@ -186,9 +192,9 @@ export const SystemLog = ({ logs, isOpen, toggle }: { logs: SystemLogEntry[], is
                     log.type === 'WARNING' ? 'text-amber-400' :
                     'text-slate-300'
                     }`}>
-                    {log.type === 'ERROR' && '✖ '}
-                    {log.type === 'SUCCESS' && '✔ '}
-                    {log.type === 'WARNING' && '⚠ '}
+                    {log.type === 'ERROR' && <span className="mr-1 inline-block text-rose-500">✖</span>}
+                    {log.type === 'SUCCESS' && <span className="mr-1 inline-block text-emerald-500">✔</span>}
+                    {log.type === 'WARNING' && <span className="mr-1 inline-block text-amber-500">⚠</span>}
                     {log.message}
                     </span>
                 </div>
@@ -199,46 +205,48 @@ export const SystemLog = ({ logs, isOpen, toggle }: { logs: SystemLogEntry[], is
   );
 };
 
-export const BookPage = ({ title, content, lang = 'en', isLoading = false, isEmpty = false, fontSize, fontType }: { title: string, content: string | null, lang?: 'en' | 'ar', isLoading?: boolean, isEmpty?: boolean, fontSize?: number, fontType?: 'serif' | 'sans' }) => {
+export const BookPage = ({ title, content, lang = 'en', isLoading = false, isEmpty = false, fontSize = 18, fontType = 'serif' }: { title: string, content: string | null, lang?: 'en' | 'ar', isLoading?: boolean, isEmpty?: boolean, fontSize?: number, fontType?: 'serif' | 'sans' }) => {
     
-    const getFontFamilyClass = () => {
-        if (lang === 'ar') {
-            return fontType === 'serif' ? 'font-arabicSerif' : 'font-arabic';
-        }
-        return fontType === 'serif' ? 'font-serif' : 'font-sans';
-    };
+    const fontClass = lang === 'ar' 
+        ? (fontType === 'serif' ? 'font-arabicSerif' : 'font-arabic')
+        : (fontType === 'serif' ? 'font-serif' : 'font-sans');
 
     return (
-        <div className="flex flex-col h-full bg-white shadow-sm border border-slate-200 rounded-xl overflow-hidden relative group">
-            <div className="h-10 border-b border-slate-100 flex items-center justify-between px-4 bg-slate-50/50 shrink-0">
-                 <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{title}</span>
-                 <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">
-                     {lang === 'ar' ? (fontType === 'serif' ? 'Amiri' : 'Noto Kufi') : (fontType === 'serif' ? 'Merriweather' : 'Inter')}
+        <div className="flex flex-col h-full bg-white shadow-sm border border-slate-200 rounded-xl overflow-hidden relative group transition-all duration-300 hover:shadow-md hover:border-brand-200/50">
+            <div className="h-10 border-b border-slate-100 flex items-center justify-between px-4 bg-slate-50/80 backdrop-blur-sm shrink-0">
+                 <span className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                     {lang === 'ar' ? <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> : <div className="w-1.5 h-1.5 rounded-full bg-brand-400" />}
+                     {title}
                  </span>
+                 <div className="flex items-center gap-2">
+                     <span className="text-[10px] text-slate-400 font-mono opacity-0 group-hover:opacity-100 transition-opacity">
+                         {fontSize}px • {fontType}
+                     </span>
+                 </div>
             </div>
             
-            <div className={`flex-1 overflow-y-auto p-8 custom-scrollbar relative ${getFontFamilyClass()} ${lang === 'ar' ? 'text-right' : 'text-left'}`}>
+            <div className={`flex-1 overflow-y-auto p-8 custom-scrollbar relative ${lang === 'ar' ? 'text-right' : 'text-left'}`}>
                 {isEmpty && !isLoading && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-300">
-                        <div className="w-16 h-16 border-2 border-dashed border-slate-200 rounded-full flex items-center justify-center mb-4">
-                            <Info className="w-6 h-6" />
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-300 select-none">
+                        <div className="w-16 h-16 border-2 border-dashed border-slate-200 rounded-full flex items-center justify-center mb-4 bg-slate-50">
+                            <Info className="w-6 h-6 text-slate-300" />
                         </div>
-                        <p className="text-sm">Waiting for content...</p>
+                        <p className="text-sm font-medium">No content loaded</p>
                     </div>
                 )}
                 
                 {isLoading && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm z-10">
-                        <div className="flex flex-col items-center gap-3">
-                            <Spinner className="w-8 h-8 text-brand-500" />
-                            <p className="text-xs font-medium text-brand-600 animate-pulse">Translating...</p>
+                    <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-[2px] z-10 animate-in fade-in duration-300">
+                        <div className="flex flex-col items-center gap-3 bg-white p-6 rounded-2xl shadow-xl border border-slate-100">
+                            <Spinner className="w-8 h-8 text-brand-600" />
+                            <p className="text-xs font-bold text-brand-600 animate-pulse tracking-wide uppercase">Translating Segment...</p>
                         </div>
                     </div>
                 )}
 
                 <div 
-                    className={`book-content prose prose-slate max-w-none leading-loose transition-all duration-200`} 
-                    style={{ fontSize: fontSize ? `${fontSize}px` : undefined }}
+                    className={`book-content prose prose-slate max-w-none leading-loose transition-all duration-200 ease-in-out ${fontClass}`} 
+                    style={{ fontSize: `${fontSize}px` }}
                     dangerouslySetInnerHTML={{ __html: content || '' }} 
                 />
             </div>
@@ -249,24 +257,24 @@ export const BookPage = ({ title, content, lang = 'en', isLoading = false, isEmp
 export const SplitView = ({ original, translated, isTranslating, fontSize, fontType }: { original: string, translated: string | null, isTranslating: boolean, fontSize: number, fontType: 'serif' | 'sans' }) => {
     const [ratio, setRatio] = useState(50);
     const containerRef = useRef<HTMLDivElement>(null);
-    const isDragging = useRef(false);
+    const [isDragging, setIsDragging] = useState(false);
 
     const handleMouseDown = (e: React.MouseEvent) => {
         e.preventDefault();
-        isDragging.current = true;
+        setIsDragging(true);
         document.body.style.cursor = 'col-resize';
         document.body.style.userSelect = 'none';
         
         const onMouseMove = (moveEvent: MouseEvent) => {
             if (!containerRef.current) return;
             const rect = containerRef.current.getBoundingClientRect();
-            const newRatio = ((moveEvent.clientX - rect.left) / rect.width) * 100;
-            // Clamp between 20% and 80%
-            setRatio(Math.min(80, Math.max(20, newRatio)));
+            let newRatio = ((moveEvent.clientX - rect.left) / rect.width) * 100;
+            newRatio = Math.max(20, Math.min(80, newRatio));
+            setRatio(newRatio);
         };
 
         const onMouseUp = () => {
-            isDragging.current = false;
+            setIsDragging(false);
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
             document.removeEventListener('mousemove', onMouseMove);
@@ -278,10 +286,10 @@ export const SplitView = ({ original, translated, isTranslating, fontSize, fontT
     };
 
     return (
-        <div ref={containerRef} className="flex h-full w-full gap-0 overflow-hidden">
-            <div style={{ width: `${ratio}%` }} className="h-full min-w-0">
+        <div ref={containerRef} className="flex h-full w-full gap-4 relative isolate">
+            <div style={{ width: `calc(${ratio}% - 8px)` }} className="h-full min-w-0 transition-[width] duration-75 ease-linear">
                 <BookPage 
-                    title="Source Text" 
+                    title="Original Source" 
                     content={original} 
                     lang="en" 
                     fontSize={fontSize} 
@@ -290,20 +298,20 @@ export const SplitView = ({ original, translated, isTranslating, fontSize, fontT
             </div>
             
             <div 
-                className="w-4 hover:w-4 flex items-center justify-center cursor-col-resize hover:bg-slate-200 transition-colors z-10 -ml-2 -mr-2 relative group"
+                className={`w-4 -ml-2 -mr-2 cursor-col-resize z-10 flex items-center justify-center group select-none`}
                 onMouseDown={handleMouseDown}
             >
-                <div className="w-1 h-8 rounded-full bg-slate-300 group-hover:bg-brand-400 transition-colors"></div>
+                <div className={`w-1 h-12 rounded-full transition-all duration-300 ${isDragging ? 'bg-brand-500 h-16 w-1.5' : 'bg-slate-200 group-hover:bg-brand-400'}`} />
             </div>
 
-            <div style={{ width: `${100 - ratio}%` }} className="h-full min-w-0">
+            <div style={{ width: `calc(${100 - ratio}% - 8px)` }} className="h-full min-w-0 transition-[width] duration-75 ease-linear">
                 <BookPage 
-                    title="Translation" 
+                    title="Arabic Translation" 
                     content={translated} 
                     lang="ar" 
                     isLoading={isTranslating} 
                     isEmpty={!translated}
-                    fontSize={fontSize} 
+                    fontSize={fontSize}
                     fontType={fontType}
                 />
             </div>
