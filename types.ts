@@ -38,6 +38,7 @@ export interface ProjectData {
   translatedSegments: number;
   sourceEpubBlob: Blob;
   createdAt: number;
+  schemaVersion?: number; // 1 = legacy (elements only), 2 = v2 (nodes)
 }
 
 export interface AnalysisResult {
@@ -50,6 +51,7 @@ export interface LogEntry {
   original: string;
   translated: string;
   timestamp: number;
+  error?: string;
 }
 
 export type LogType = 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR';

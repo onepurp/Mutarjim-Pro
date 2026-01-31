@@ -5,6 +5,7 @@ const BLOCK_TAGS = ['p', 'div', 'blockquote', 'li', 'h1', 'h2', 'h3', 'h4', 'h5'
 const BREAKER_TAGS = ['img', 'hr', 'table', 'pre', 'svg', 'figure'];
 const HEADER_TAGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
 const BATCH_CHAR_LIMIT = 6000;
+const SCHEMA_VERSION = 2; // V2 supports text nodes
 
 export const epubService = {
   async parseAndSegment(file: File): Promise<AnalysisResult> {
@@ -27,7 +28,6 @@ export const epubService = {
     const opfDoc = parser.parseFromString(opfContent, 'application/xml');
 
     // 2. Extract Metadata
-    // Note: Elements often have namespaces (e.g. dc:title, opf:metadata)
     const metadata = opfDoc.getElementsByTagName('metadata')[0] || opfDoc.getElementsByTagNameNS('*', 'metadata')[0];
     
     const getMetaText = (tagName: string) => {
@@ -91,7 +91,7 @@ export const epubService = {
         
         const htmlContent = await zip.file(fullPath)?.async('string');
         if (htmlContent) {
-           const fileSegments = this.segmentHtml(htmlContent, fullPath);
+           const fileSegments = this.segmentHtmlV2(htmlContent, fullPath);
            segments.push(...fileSegments);
         }
       }
@@ -106,18 +106,108 @@ export const epubService = {
       translatedSegments: 0,
       sourceEpubBlob: file,
       createdAt: Date.now(),
+      schemaVersion: SCHEMA_VERSION
     };
 
     return { project: projectData, segments };
   },
 
-  segmentHtml(html: string, fileHref: string): Segment[] {
+  // --- V2 Segmentation (Handles mixed content / text nodes) ---
+  segmentHtmlV2(html: string, fileHref: string): Segment[] {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'application/xhtml+xml');
-    return this.segmentHtmlRecursive(doc.body, fileHref);
+    const segments: Segment[] = [];
+    let currentBatch: Node[] = [];
+    let currentBatchLength = 0;
+    let batchIndex = 0;
+
+    const flushBatch = () => {
+      if (currentBatch.length > 0) {
+        const serializer = new XMLSerializer();
+        const originalHtml = currentBatch.map(node => serializer.serializeToString(node)).join('');
+        segments.push({
+          id: `${fileHref}::${batchIndex++}`,
+          fileHref,
+          batchIndex: batchIndex - 1,
+          originalHtml,
+          translatedHtml: '',
+          status: SegmentStatus.PENDING,
+          retryCount: 0,
+        });
+        currentBatch = [];
+        currentBatchLength = 0;
+      }
+    };
+
+    const isTranslatableElement = (el: Element): boolean => {
+      const tagName = el.tagName.toLowerCase();
+      if (!BLOCK_TAGS.includes(tagName)) return false;
+      if (!el.textContent?.trim()) return false;
+      
+      const hasBlockChildren = Array.from(el.children).some(child => 
+        BLOCK_TAGS.includes(child.tagName.toLowerCase()) || 
+        BREAKER_TAGS.includes(child.tagName.toLowerCase())
+      );
+      return !hasBlockChildren;
+    };
+
+    const traverse = (node: Node) => {
+       if (node.nodeType === Node.ELEMENT_NODE) {
+           const el = node as Element;
+           const tagName = el.tagName.toLowerCase();
+
+           if (BREAKER_TAGS.includes(tagName)) {
+             flushBatch();
+             return; 
+           }
+
+           if (HEADER_TAGS.includes(tagName)) {
+             flushBatch();
+             currentBatch.push(node);
+             flushBatch();
+             return;
+           }
+
+           if (isTranslatableElement(el)) {
+             const html = new XMLSerializer().serializeToString(el);
+             if (currentBatchLength + html.length > BATCH_CHAR_LIMIT) {
+               flushBatch();
+             }
+             currentBatch.push(node);
+             currentBatchLength += html.length;
+             return; // Don't traverse children of a block we just captured
+           }
+
+           // Traverse children
+           Array.from(node.childNodes).forEach(traverse);
+       
+       } else if (node.nodeType === Node.TEXT_NODE) {
+           // Capture orphan text nodes (mixed content)
+           if (node.textContent?.trim()) {
+               const len = node.textContent.length;
+               if (currentBatchLength + len > BATCH_CHAR_LIMIT) {
+                   flushBatch();
+               }
+               currentBatch.push(node);
+               currentBatchLength += len;
+           }
+       }
+    };
+
+    Array.from(doc.body.childNodes).forEach(traverse);
+    flushBatch();
+
+    return segments;
   },
 
-  segmentHtmlRecursive(root: Element, fileHref: string): Segment[] {
+  // --- Legacy Segmentation (For backward compatibility) ---
+  segmentHtmlLegacy(html: string, fileHref: string): Segment[] {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'application/xhtml+xml');
+    return this.segmentHtmlRecursiveLegacy(doc.body, fileHref);
+  },
+
+  segmentHtmlRecursiveLegacy(root: Element, fileHref: string): Segment[] {
     const segments: Segment[] = [];
     let currentBatch: Element[] = [];
     let currentBatchLength = 0;
@@ -141,14 +231,9 @@ export const epubService = {
     };
 
     const isTranslatableBlock = (el: Element): boolean => {
-      // It is a block tag
       const tagName = el.tagName.toLowerCase();
       if (!BLOCK_TAGS.includes(tagName)) return false;
-      
-      // It has text content
       if (!el.textContent?.trim()) return false;
-      
-      // It does NOT have block children (it's a leaf block)
       const hasBlockChildren = Array.from(el.children).some(child => 
         BLOCK_TAGS.includes(child.tagName.toLowerCase()) || 
         BREAKER_TAGS.includes(child.tagName.toLowerCase())
@@ -158,52 +243,32 @@ export const epubService = {
 
     const traverse = (node: Element) => {
        const tagName = node.tagName.toLowerCase();
-
-       if (BREAKER_TAGS.includes(tagName)) {
-         flushBatch();
-         return; 
-       }
-
-       if (HEADER_TAGS.includes(tagName)) {
-         flushBatch();
-         currentBatch.push(node);
-         flushBatch();
-         return;
-       }
-
+       if (BREAKER_TAGS.includes(tagName)) { flushBatch(); return; }
+       if (HEADER_TAGS.includes(tagName)) { flushBatch(); currentBatch.push(node); flushBatch(); return; }
        if (isTranslatableBlock(node)) {
-         if (currentBatchLength + node.outerHTML.length > BATCH_CHAR_LIMIT) {
-           flushBatch();
-         }
+         if (currentBatchLength + node.outerHTML.length > BATCH_CHAR_LIMIT) { flushBatch(); }
          currentBatch.push(node);
          currentBatchLength += node.outerHTML.length;
-         return; // Don't traverse children
+         return;
        }
-
-       // If not a leaf block, traverse children
-       for (const child of Array.from(node.children)) {
-         traverse(child);
-       }
+       for (const child of Array.from(node.children)) { traverse(child); }
     };
-
     Array.from(root.children).forEach(traverse);
     flushBatch();
-
     return segments;
   },
 
-  async reassembleEpub(originalBlob: Blob, segments: Segment[], customCoverBlob?: Blob, metadataOverrides?: { arabicTitle?: string, author?: string, originalTitle?: string }): Promise<Blob> {
+  async reassembleEpub(originalBlob: Blob, segments: Segment[], customCoverBlob?: Blob, options?: { arabicTitle?: string, author?: string, originalTitle?: string, schemaVersion?: number }): Promise<Blob> {
     const jszip = new JSZip();
     const zip = await jszip.loadAsync(originalBlob);
-    
-    // Group segments by file
+    const isV2 = options?.schemaVersion === 2;
+
     const segmentsByFile: Record<string, Segment[]> = {};
     segments.forEach(s => {
       if (!segmentsByFile[s.fileHref]) segmentsByFile[s.fileHref] = [];
       segmentsByFile[s.fileHref].push(s);
     });
 
-    // 1. Process HTML Files
     for (const [fileHref, fileSegments] of Object.entries(segmentsByFile)) {
       fileSegments.sort((a, b) => a.batchIndex - b.batchIndex);
       
@@ -218,49 +283,9 @@ export const epubService = {
       doc.documentElement.setAttribute('lang', 'ar');
 
       let segmentIndex = 0;
-      let currentBatchNodes: Element[] = [];
+      let currentBatchNodes: Node[] = []; 
 
-      const isTranslatableBlock = (el: Element): boolean => {
-        if (!BLOCK_TAGS.includes(el.tagName.toLowerCase())) return false;
-        if (!el.textContent?.trim()) return false;
-        const hasBlockChildren = Array.from(el.children).some(child => 
-          BLOCK_TAGS.includes(child.tagName.toLowerCase()) || 
-          BREAKER_TAGS.includes(child.tagName.toLowerCase())
-        );
-        return !hasBlockChildren;
-      };
-
-      const traverseAndReplace = (node: Element) => {
-        const tagName = node.tagName.toLowerCase();
-
-        if (BREAKER_TAGS.includes(tagName)) {
-           processBatch(); 
-           return;
-        }
-
-        if (HEADER_TAGS.includes(tagName)) {
-           processBatch();
-           currentBatchNodes.push(node);
-           processBatch();
-           return;
-        }
-
-        if (isTranslatableBlock(node)) {
-           const size = node.outerHTML.length;
-           const currentBatchSize = currentBatchNodes.reduce((acc, n) => acc + n.outerHTML.length, 0);
-           
-           if (currentBatchSize + size > BATCH_CHAR_LIMIT && currentBatchNodes.length > 0) {
-              processBatch();
-           }
-           currentBatchNodes.push(node);
-           return;
-        }
-
-        for (const child of Array.from(node.children)) {
-          traverseAndReplace(child);
-        }
-      };
-
+      // --- Helpers for Reassembly ---
       const processBatch = () => {
         if (currentBatchNodes.length === 0) return;
         
@@ -268,22 +293,64 @@ export const epubService = {
         
         if (segment && segment.status === SegmentStatus.TRANSLATED) {
            const firstNode = currentBatchNodes[0];
-           const parent = firstNode.parentElement;
+           // We use the first node's parent as the anchor for INSERTION.
+           // However, deletion must be handled per-node (see below).
+           const insertionParent = firstNode.parentElement; 
            
-           if (parent) {
-             const tempDiv = doc.createElement('div');
-             tempDiv.innerHTML = segment.translatedHtml;
+           if (insertionParent) {
+             let nodesToInsert: Node[] = [];
              
-             while (tempDiv.firstChild) {
-               const child = tempDiv.firstChild;
-               if (child.nodeType === Node.ELEMENT_NODE) {
-                  (child as Element).setAttribute('dir', 'rtl');
+             try {
+                // Try strictly valid XHTML first
+                const tempDoc = new DOMParser().parseFromString(`<div>${segment.translatedHtml}</div>`, 'application/xhtml+xml');
+                if (tempDoc.getElementsByTagName('parsererror').length > 0) throw new Error('XML Parse Error');
+                const root = tempDoc.documentElement;
+                while(root.firstChild) {
+                    nodesToInsert.push(doc.importNode(root.firstChild, true));
+                    root.removeChild(root.firstChild);
+                }
+             } catch (e) {
+                // Fallback strategies (Entitites, then HTML loose)
+                try {
+                    const fixedHtml = segment.translatedHtml.replace(/&(?![a-zA-Z0-9#]+;)/g, '&amp;');
+                    const tempDoc = new DOMParser().parseFromString(`<div>${fixedHtml}</div>`, 'application/xhtml+xml');
+                    if (tempDoc.getElementsByTagName('parsererror').length > 0) throw new Error('XML Parse Error after fix');
+                    const root = tempDoc.documentElement;
+                    while(root.firstChild) {
+                        nodesToInsert.push(doc.importNode(root.firstChild, true));
+                        root.removeChild(root.firstChild);
+                    }
+                } catch (e2) {
+                    const tempDoc = new DOMParser().parseFromString(`<body>${segment.translatedHtml}</body>`, 'text/html');
+                    while(tempDoc.body.firstChild) {
+                        nodesToInsert.push(doc.importNode(tempDoc.body.firstChild, true));
+                        tempDoc.body.removeChild(tempDoc.body.firstChild);
+                    }
+                }
+             }
+
+             // 1. INSERTION: Add new nodes before the first node of the batch
+             for (const node of nodesToInsert) {
+               if (node.nodeType === Node.ELEMENT_NODE) {
+                  (node as Element).setAttribute('dir', 'rtl');
                }
-               parent.insertBefore(child, firstNode);
+               insertionParent.insertBefore(node, firstNode);
              }
              
+             // 2. DELETION: Safe Removal Logic
+             // We iterate through the EXACT nodes collected during traversal.
+             // We use n.parentNode.removeChild(n) which is the DOM standard for "remove this specific object".
              currentBatchNodes.forEach(n => {
-                if (n.parentElement === parent) parent.removeChild(n);
+                // SAFETY: Root/Body Guard. 
+                // Ensure we never inadvertently delete the document structure even if logic fails.
+                if (n.nodeName === 'BODY' || n.nodeName === 'HTML' || n.nodeName === 'HEAD') return;
+
+                // SAFETY: Existence Check.
+                // Only remove if it has a parent (i.e., it is currently in the DOM).
+                // This prevents errors if a node was already removed (unlikely) or if it's a detached node.
+                if (n.parentNode) {
+                    n.parentNode.removeChild(n);
+                }
              });
            }
         }
@@ -291,7 +358,81 @@ export const epubService = {
         currentBatchNodes = [];
       };
 
-      Array.from(doc.body.children).forEach(traverseAndReplace);
+      // --- Traversal V2 ---
+      const traverseV2 = (node: Node) => {
+         if (node.nodeType === Node.ELEMENT_NODE) {
+             const el = node as Element;
+             const tagName = el.tagName.toLowerCase();
+
+             if (BREAKER_TAGS.includes(tagName)) { processBatch(); return; }
+             if (HEADER_TAGS.includes(tagName)) { processBatch(); currentBatchNodes.push(node); processBatch(); return; }
+
+             const isTranslatableElement = (el: Element): boolean => {
+                if (!BLOCK_TAGS.includes(el.tagName.toLowerCase())) return false;
+                if (!el.textContent?.trim()) return false;
+                const hasBlockChildren = Array.from(el.children).some(child => 
+                    BLOCK_TAGS.includes(child.tagName.toLowerCase()) || 
+                    BREAKER_TAGS.includes(child.tagName.toLowerCase())
+                );
+                return !hasBlockChildren;
+             };
+
+             if (isTranslatableElement(el)) {
+                 const html = new XMLSerializer().serializeToString(el);
+                 const currentBatchSize = currentBatchNodes.reduce((acc, n) => acc + (n.nodeType === Node.ELEMENT_NODE ? (n as Element).outerHTML.length : (n.textContent?.length || 0)), 0);
+                 if (currentBatchSize + html.length > BATCH_CHAR_LIMIT && currentBatchNodes.length > 0) {
+                     processBatch();
+                 }
+                 currentBatchNodes.push(node);
+                 return; 
+             }
+             
+             Array.from(node.childNodes).forEach(traverseV2);
+
+         } else if (node.nodeType === Node.TEXT_NODE) {
+             if (node.textContent?.trim()) {
+                 const len = node.textContent.length;
+                 const currentBatchSize = currentBatchNodes.reduce((acc, n) => acc + (n.nodeType === Node.ELEMENT_NODE ? (n as Element).outerHTML.length : (n.textContent?.length || 0)), 0);
+                 if (currentBatchSize + len > BATCH_CHAR_LIMIT && currentBatchNodes.length > 0) {
+                     processBatch();
+                 }
+                 currentBatchNodes.push(node);
+             }
+         }
+      };
+
+      // --- Traversal Legacy ---
+      const traverseLegacy = (node: Element) => {
+        const tagName = node.tagName.toLowerCase();
+        if (BREAKER_TAGS.includes(tagName)) { processBatch(); return; }
+        if (HEADER_TAGS.includes(tagName)) { processBatch(); currentBatchNodes.push(node); processBatch(); return; }
+
+        const isTranslatableBlock = (el: Element): boolean => {
+          if (!BLOCK_TAGS.includes(el.tagName.toLowerCase())) return false;
+          if (!el.textContent?.trim()) return false;
+          const hasBlockChildren = Array.from(el.children).some(child => 
+            BLOCK_TAGS.includes(child.tagName.toLowerCase()) || 
+            BREAKER_TAGS.includes(child.tagName.toLowerCase())
+          );
+          return !hasBlockChildren;
+        };
+
+        if (isTranslatableBlock(node)) {
+           const size = node.outerHTML.length;
+           const currentBatchSize = currentBatchNodes.reduce((acc, n) => acc + (n as Element).outerHTML.length, 0);
+           if (currentBatchSize + size > BATCH_CHAR_LIMIT && currentBatchNodes.length > 0) { processBatch(); }
+           currentBatchNodes.push(node);
+           return;
+        }
+        for (const child of Array.from(node.children)) { traverseLegacy(child); }
+      };
+
+      // Execute Logic based on version
+      if (isV2) {
+          Array.from(doc.body.childNodes).forEach(traverseV2);
+      } else {
+          Array.from(doc.body.children).forEach(traverseLegacy);
+      }
       processBatch(); 
 
       const serializer = new XMLSerializer();
@@ -299,14 +440,14 @@ export const epubService = {
       zip.file(fileHref, newHtml);
     }
 
-    // 2. Handle Custom Cover
+    // 2. Custom Cover (Keep existing)
     if (customCoverBlob) {
+        // ... (existing code, compacted for brevity) ...
         const containerXml = await zip.file('META-INF/container.xml')?.async('string');
         if (containerXml) {
            const cDoc = new DOMParser().parseFromString(containerXml, 'application/xml');
            const rootfile = cDoc.getElementsByTagName('rootfile')[0];
            const opfPath = rootfile?.getAttribute('full-path');
-           
            if (opfPath) {
              const opfStr = await zip.file(opfPath)?.async('string');
              if (opfStr) {
@@ -314,11 +455,7 @@ export const epubService = {
                const manifest = opfDoc.getElementsByTagName('manifest')[0] || opfDoc.getElementsByTagNameNS('*', 'manifest')[0];
                const items = Array.from(manifest?.getElementsByTagName('item') || []);
                if (items.length === 0 && manifest) items.push(...Array.from(manifest.getElementsByTagNameNS('*', 'item')));
-
-               const coverItem = items.find(item => 
-                 item.getAttribute('id')?.toLowerCase().includes('cover') || 
-                 item.getAttribute('properties') === 'cover-image'
-               );
+               const coverItem = items.find(item => item.getAttribute('id')?.toLowerCase().includes('cover') || item.getAttribute('properties') === 'cover-image');
                if (coverItem) {
                   const href = coverItem.getAttribute('href');
                   if (href) {
@@ -344,7 +481,6 @@ export const epubService = {
            const opfDoc = new DOMParser().parseFromString(opfStr, 'application/xml');
            const metadata = opfDoc.getElementsByTagName('metadata')[0] || opfDoc.getElementsByTagNameNS('*', 'metadata')[0];
            if (metadata) {
-             // Update Language
              let langEl = metadata.getElementsByTagName('language')[0] || metadata.getElementsByTagNameNS('*', 'language')[0];
              if (!langEl) {
                langEl = opfDoc.createElementNS('http://purl.org/dc/elements/1.1/', 'dc:language');
@@ -352,17 +488,14 @@ export const epubService = {
              }
              langEl.textContent = 'ar';
              
-             // Update Title with specific format if data provided
              const titleEl = metadata.getElementsByTagName('title')[0] || metadata.getElementsByTagNameNS('*', 'title')[0];
              if (titleEl) {
-                 if (metadataOverrides?.arabicTitle) {
-                     // EXACT FORMAT: <arabic_title> - <author_name> (مترجم) [original title]
-                     const arTitle = metadataOverrides.arabicTitle;
-                     const auth = metadataOverrides.author || 'Unknown Author';
-                     const origTitle = metadataOverrides.originalTitle || 'Unknown Title';
+                 if (options?.arabicTitle) {
+                     const arTitle = options.arabicTitle;
+                     const auth = options.author || 'Unknown Author';
+                     const origTitle = options.originalTitle || 'Unknown Title';
                      titleEl.textContent = `${arTitle} - ${auth} (مترجم) [${origTitle}]`;
                  } else if (titleEl.textContent && !titleEl.textContent.includes('(مترجم)')) {
-                    // Fallback
                     titleEl.textContent = `(مترجم) ${titleEl.textContent}`;
                  }
              }
@@ -373,5 +506,10 @@ export const epubService = {
     }
 
     return await zip.generateAsync({ type: 'blob', mimeType: 'application/epub+zip' });
+  },
+
+  // ... (keep segmentHtml for interface compatibility if needed, calling V2)
+  segmentHtml(html: string, fileHref: string): Segment[] {
+      return this.segmentHtmlV2(html, fileHref);
   }
 };

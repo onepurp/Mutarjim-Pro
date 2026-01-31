@@ -10,6 +10,12 @@ Rules:
 4. Output only the HTML. Do not wrap it in Markdown code blocks. Return only the translated HTML string. Do not use markdown code blocks or a preamble.
 5. If the text contains technical terms, keep them in English if appropriate or provide a standard Arabic equivalent.
 6. Preserve all numeric values in their original form.
+
+and always remember, A. Preserve all tags exactly. Do not add new tags. Do not delete, change or reorder any HTML tags.
+B. Do not change the nesting of tags. Do not translate class names, IDs or attributes.
+C. Output only the HTML. Do not wrap it in Markdown code blocks.
+
+this is the most important and dangerous thing for me.
 `;
 
 type LoggerCallback = (msg: string, type: LogType, data?: any) => void;
@@ -22,84 +28,79 @@ export const geminiService = {
 
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
-    try {
-      // Create a timeout promise
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error("Request timed out")), 600000); // 10m timeout
-      });
+    // Configure safety settings to be maximally permissive for literary fiction
+    const safetySettings = [
+      { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE }
+    ];
 
-      onLog?.("Preparing translation request...", 'INFO', { 
-          inputLength: html.length,
-          preview: html.substring(0, 100) + (html.length > 100 ? '...' : ''),
-          model: 'gemini-3-pro-preview'
-      });
+    // Fallback strategy: Try Pr o model first, then Flash if Pro is too strict/busy
+    const modelsToTry = ['gemini-3-pro-preview',  'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'];
+    let lastError: Error | null = null;
 
-      const startTime = Date.now();
+    for (const model of modelsToTry) {
+        try {
+            onLog?.(`Attempting translation with ${model}...`, 'INFO', { 
+                inputLength: html.length,
+                model
+            });
 
-      // Configure safety settings to be permissive for literary content
-      // which may contain violence, romance, or sensitive themes.
-      const safetySettings = [
-        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE }
-      ];
+            const startTime = Date.now();
 
-      const requestPromise = ai.models.generateContent({
-        model: 'gemini-3-pro-preview',
-        contents: { parts: [{ text: html }] },
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          temperature: 0.3, // Slightly higher temperature to avoid deterministic refusal loops
-          safetySettings: safetySettings,
-          // thinkingConfig: { thinkingBudget: 0 }
+            // Create a timeout promise
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error("Request timed out")), 600000); // 10m timeout
+            });
+
+            const requestPromise = ai.models.generateContent({
+                model: model,
+                contents: { parts: [{ text: html }] },
+                config: {
+                    systemInstruction: SYSTEM_INSTRUCTION,
+                    temperature: 0, // Slightly higher for literary creativity
+                    safetySettings: safetySettings,
+                }
+            });
+
+            // Race against timeout
+            const response = await Promise.race([requestPromise, timeoutPromise]);
+            const duration = Date.now() - startTime;
+            const finishReason = response.candidates?.[0]?.finishReason;
+            const translatedText = response.text?.trim();
+
+            onLog?.(`Response from ${model} in ${duration}ms`, 'INFO', { finishReason });
+
+            if (!translatedText) {
+                // If text is empty, it's likely a safety block or finish reason issue
+                if (finishReason && finishReason !== 'STOP') {
+                    throw new Error(`AI Safety/Filter Block (${finishReason})`);
+                }
+                throw new Error("Empty response from AI");
+            }
+
+            // Cleanup
+            const cleanHtml = translatedText.replace(/^```html/, '').replace(/```$/, '').trim();
+
+            if (!this.validateIntegrity(html, cleanHtml, onLog)) {
+                throw new Error("Integrity Check Failed: Tag mismatch.");
+            }
+            
+            onLog?.("Translation successful.", 'SUCCESS');
+            return cleanHtml;
+
+        } catch (error) {
+            console.warn(`Translation failed with ${model}:`, error);
+            lastError = error as Error;
+            onLog?.(`Model ${model} failed: ${(error as Error).message}. Switching models...`, 'WARNING');
+            // Loop continues to next model
         }
-      });
-
-      onLog?.("Sending request to Gemini API...", 'INFO');
-
-      // Race against timeout
-      const response = await Promise.race([requestPromise, timeoutPromise]);
-      
-      const duration = Date.now() - startTime;
-      
-      const finishReason = response.candidates?.[0]?.finishReason;
-
-      onLog?.(`Response received in ${duration}ms`, 'SUCCESS', {
-          candidates: response.candidates?.length,
-          finishReason: finishReason,
-          usageMetadata: response.usageMetadata
-      });
-
-      const translatedText = response.text?.trim();
-      
-      if (!translatedText) {
-        // If text is empty, it's likely a safety block or finish reason issue
-        if (finishReason && finishReason !== 'STOP') {
-             throw new Error(`AI Generation Failed: ${finishReason}`);
-        }
-        throw new Error("Empty response from AI (No text generated)");
-      }
-
-      // Cleanup: remove markdown block symbols if Gemini adds them despite instructions
-      const cleanHtml = translatedText.replace(/^```html/, '').replace(/```$/, '').trim();
-
-      if (!this.validateIntegrity(html, cleanHtml, onLog)) {
-        throw new Error("Integrity Check Failed: Tag mismatch detected.");
-      }
-      
-      onLog?.("Validation passed. Segment complete.", 'SUCCESS');
-
-      return cleanHtml;
-    } catch (error) {
-      console.error("Gemini Translation Error:", error);
-      onLog?.("Translation process failed", 'ERROR', {
-          error: (error as Error).message,
-          stack: (error as Error).stack
-      });
-      throw error;
     }
+
+    onLog?.("All models failed to translate segment.", 'ERROR');
+    throw lastError || new Error("Translation failed on all available models.");
   },
 
   validateIntegrity(original: string, translated: string, onLog?: LoggerCallback): boolean {

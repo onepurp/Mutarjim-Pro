@@ -147,7 +147,12 @@ const App = () => {
               project.sourceEpubBlob, 
               await dbService.getAllSegments(), 
               project.customCoverBlob, 
-              { arabicTitle: project.arabicTitle, author: project.author, originalTitle: project.title }
+              { 
+                  arabicTitle: project.arabicTitle, 
+                  author: project.author, 
+                  originalTitle: project.title,
+                  schemaVersion: project.schemaVersion // Pass schema version for reliable export
+              }
           );
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
