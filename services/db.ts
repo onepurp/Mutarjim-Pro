@@ -102,5 +102,24 @@ export const dbService = {
     const translated = await db.countFromIndex('segments', 'by-status', SegmentStatus.TRANSLATED);
     const failed = await db.countFromIndex('segments', 'by-status', SegmentStatus.FAILED);
     return { total, translated, failed };
+  },
+
+  async retrySkippedSegments(): Promise<number> {
+    const db = await getDB();
+    const tx = db.transaction('segments', 'readwrite');
+    const index = tx.store.index('by-status');
+    
+    // Get all skipped segments first
+    const skippedSegments = await index.getAll(SegmentStatus.SKIPPED);
+    
+    for (const segment of skippedSegments) {
+        segment.status = SegmentStatus.PENDING;
+        segment.retryCount = 0;
+        segment.error = undefined;
+        await tx.store.put(segment);
+    }
+    
+    await tx.done;
+    return skippedSegments.length;
   }
 };

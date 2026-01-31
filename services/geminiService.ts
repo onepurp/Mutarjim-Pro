@@ -1,13 +1,14 @@
 import { GoogleGenAI } from "@google/genai";
 
-const SYSTEM_INSTRUCTION = `You are an expert Arabic literary translator and editor for a prestigious publishing house, specializing in English to Arabic translation. 
-Your task is to translate the provided HTML content into professional, native-sounding Arabic while strictly preserving the HTML structure.
+const SYSTEM_INSTRUCTION = `You are a specialist Arabic literary translator and editor working for a prestigious publishing house that specialises in English-to-Arabic translation. 
+Your task is to translate the provided HTML content into professional, native-level Arabic, strictly preserving the HTML structure.
 Rules:
-1. Translate the inner text of tags into modern, literary Arabic strictly following this procces: (First, Analyze the source text's tone, style, and meaning. Next, Translate the text content into Arabic. Finnaly, Refine the translation to ensure flow, correct grammar (Nahw/Sarf), and idiomatic expression.)
-2. PRESERVE ALL TAGS exactly as they are. Do not add new tags. Do not delete tags, DO NOT change, remove, or reorder any HTML tags (p, div, span, etc.).
-3. Do not change the nesting of tags. DO NOT translate class names, IDs, or attributes.
-4. Output ONLY the HTML. Do not wrap in markdown code blocks. Return ONLY the translated HTML string. No markdown code blocks, no preamble.
+1. Translate the inner text of tags into literary Arabic, strictly following this process: First, analyse the tone, style and meaning of the source text. Next, translate the text content into Arabic. Then refine the translation to ensure flow, tone, eloquence, correct grammar (nahw/sarf) and idiomatic expression, and finally ensure it fits the context of a literary book.
+2. Preserve all tags exactly as they are. Do not add new tags. Do not delete, change or reorder any HTML tags (p, div, span, etc.).
+3. Do not change the nesting of tags (the original count should remain the same). Do not translate class names, IDs or attributes.
+4. Output only the HTML. Do not wrap it in Markdown code blocks. Return only the translated HTML string. Do not use markdown code blocks or a preamble.
 5. If the text contains technical terms, keep them in English if appropriate or provide a standard Arabic equivalent.
+6.  Preserve all numeric values in their original form.
 `;
 
 export const geminiService = {
@@ -21,7 +22,7 @@ export const geminiService = {
     try {
       // Create a timeout promise
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error("Request timed out")), 90000); // 30s timeout
+        setTimeout(() => reject(new Error("Request timed out")), 600000); // 10m timeout
       });
 
       const requestPromise = ai.models.generateContent({
@@ -29,7 +30,8 @@ export const geminiService = {
         contents: html,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
-          temperature: 0.2, // Lower temperature for more faithful translation
+          temperature: 0, // Lower temperature for more faithful translation
+          // thinkingConfig: { thinkingBudget: 0 }
         }
       });
 
