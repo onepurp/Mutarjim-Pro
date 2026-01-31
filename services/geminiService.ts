@@ -9,7 +9,7 @@ Rules:
 3. Do not change the nesting of tags (the original count should remain the same). Do not translate class names, IDs or attributes.
 4. Output only the HTML. Do not wrap it in Markdown code blocks. Return only the translated HTML string. Do not use markdown code blocks or a preamble.
 5. If the text contains technical terms, keep them in English if appropriate or provide a standard Arabic equivalent.
-6.  Preserve all numeric values in their original form.
+6. Preserve all numeric values in their original form.
 `;
 
 type LoggerCallback = (msg: string, type: LogType, data?: any) => void;

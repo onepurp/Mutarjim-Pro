@@ -148,6 +148,55 @@ export const SegmentMap = ({ segments, onClickSegment }: { segments: Segment[], 
 };
 
 // Replaces SystemLog
+
+const AILogRow = ({ log }: { log: AIDebugLogEntry }) => {
+    const [expanded, setExpanded] = useState(false);
+    
+    return (
+        <div className={`rounded-sm transition-colors ${expanded ? 'bg-white/5' : 'hover:bg-white/5'}`}>
+            <div 
+                onClick={() => log.data && setExpanded(!expanded)} 
+                className={`flex gap-3 p-1 ${log.data ? 'cursor-pointer' : ''}`}
+            >
+                <span className="text-indigo-400/60 shrink-0 select-none w-16 text-right text-[10px] pt-0.5 font-mono">
+                    {new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })}
+                </span>
+                
+                <div className="flex-1 flex gap-2 overflow-hidden">
+                    {log.data ? (
+                        <div className="mt-0.5 text-slate-500 shrink-0">
+                            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                        </div>
+                    ) : (
+                        <div className="w-3 shrink-0"></div>
+                    )}
+
+                    <div className="flex-1 min-w-0">
+                        <span className={`block truncate ${
+                            log.type === 'ERROR' ? 'text-rose-400' :
+                            log.type === 'SUCCESS' ? 'text-emerald-400' :
+                            log.type === 'WARNING' ? 'text-amber-400' :
+                            'text-indigo-200'
+                        }`}>
+                            {log.message}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            
+            {expanded && log.data && (
+                <div className="pl-20 pr-4 pb-2 text-[10px]">
+                    <div className="bg-slate-900 rounded border border-white/10 p-2 overflow-x-auto relative group/code">
+                        <pre className="text-slate-400 font-mono whitespace-pre-wrap break-all">
+                            {JSON.stringify(log.data, null, 2)}
+                        </pre>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
 export const Console = ({ systemLogs, aiLogs, isOpen, toggle }: { systemLogs: SystemLogEntry[], aiLogs: AIDebugLogEntry[], isOpen: boolean, toggle: () => void }) => {
   const [tab, setTab] = useState<'SYSTEM' | 'AI'>('SYSTEM');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -255,54 +304,6 @@ export const Console = ({ systemLogs, aiLogs, isOpen, toggle }: { systemLogs: Sy
     </div>
   );
 };
-
-const AILogRow = ({ log }: { log: AIDebugLogEntry }) => {
-    const [expanded, setExpanded] = useState(false);
-    
-    return (
-        <div className={`rounded-sm transition-colors ${expanded ? 'bg-white/5' : 'hover:bg-white/5'}`}>
-            <div 
-                onClick={() => log.data && setExpanded(!expanded)} 
-                className={`flex gap-3 p-1 ${log.data ? 'cursor-pointer' : ''}`}
-            >
-                <span className="text-indigo-400/60 shrink-0 select-none w-16 text-right text-[10px] pt-0.5 font-mono">
-                    {new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })}
-                </span>
-                
-                <div className="flex-1 flex gap-2 overflow-hidden">
-                    {log.data ? (
-                        <div className="mt-0.5 text-slate-500 shrink-0">
-                            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                        </div>
-                    ) : (
-                        <div className="w-3 shrink-0"></div>
-                    )}
-
-                    <div className="flex-1 min-w-0">
-                        <span className={`block truncate ${
-                            log.type === 'ERROR' ? 'text-rose-400' :
-                            log.type === 'SUCCESS' ? 'text-emerald-400' :
-                            log.type === 'WARNING' ? 'text-amber-400' :
-                            'text-indigo-200'
-                        }`}>
-                            {log.message}
-                        </span>
-                    </div>
-                </div>
-            </div>
-            
-            {expanded && log.data && (
-                <div className="pl-20 pr-4 pb-2 text-[10px]">
-                    <div className="bg-slate-900 rounded border border-white/10 p-2 overflow-x-auto relative group/code">
-                        <pre className="text-slate-400 font-mono whitespace-pre-wrap break-all">
-                            {JSON.stringify(log.data, null, 2)}
-                        </pre>
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-}
 
 export const BookPage = ({ title, content, lang = 'en', isLoading = false, isEmpty = false, fontSize = 18, fontType = 'serif' }: { title: string, content: string | null, lang?: 'en' | 'ar', isLoading?: boolean, isEmpty?: boolean, fontSize?: number, fontType?: 'serif' | 'sans' }) => {
     
