@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Upload, Book, Play, Pause, Download, AlertCircle, Save, FolderOpen, Image as ImageIcon, Settings, Home, FileText, ChevronRight, ChevronLeft, Edit3, RefreshCw, X, Check, Globe, LogOut, Type, Minus, Plus } from 'lucide-react';
-import { AppState, ProjectData, Segment, SegmentStatus, SystemLogEntry, LogType, LiveLogItem } from './types';
+import { AppState, ProjectData, Segment, SegmentStatus, SystemLogEntry, LogType, LiveLogItem, AIDebugLogEntry } from './types';
 import { dbService } from './services/db';
 import { epubService } from './services/epubService';
 import { geminiService } from './services/geminiService';
 import { backupService } from './services/backupService';
-import { Button, Card, ProgressBar, Badge, Spinner, SegmentMap, SystemLog, Modal, Input, Label, SplitView } from './components/ui';
+import { Button, Card, ProgressBar, Badge, Spinner, SegmentMap, Console, Modal, Input, Label, SplitView } from './components/ui';
 
 const App = () => {
   // Application State
@@ -15,6 +15,7 @@ const App = () => {
   const [project, setProject] = useState<ProjectData | null>(null);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [systemLogs, setSystemLogs] = useState<SystemLogEntry[]>([]);
+  const [aiLogs, setAiLogs] = useState<AIDebugLogEntry[]>([]);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   
   // Studio UI State
@@ -39,6 +40,21 @@ const App = () => {
           message,
           type
       }]);
+  }, []);
+
+  const addAiLog = useCallback((message: string, type: LogType = 'INFO', data?: any) => {
+      setAiLogs(prev => {
+          const newLog = {
+              id: Math.random().toString(36).substr(2, 9),
+              timestamp: Date.now(),
+              message,
+              type,
+              data
+          };
+          // Keep last 200 logs to prevent memory issues
+          if (prev.length > 200) return [...prev.slice(1), newLog];
+          return [...prev, newLog];
+      });
   }, []);
 
   // --- DATA LOADING ---
@@ -206,7 +222,7 @@ const App = () => {
               });
 
               // Translate
-              const translatedHtml = await geminiService.translateHtml(segment.originalHtml);
+              const translatedHtml = await geminiService.translateHtml(segment.originalHtml, (msg, type, data) => addAiLog(msg, type, data));
               
               // Update DB
               segment.translatedHtml = translatedHtml;
@@ -275,7 +291,7 @@ const App = () => {
               break;
           }
       }
-  }, [appState, segments, addLog]);
+  }, [appState, segments, addLog, addAiLog]);
 
   useEffect(() => {
       if (appState === AppState.TRANSLATING) {
@@ -554,8 +570,13 @@ const App = () => {
                       </div>
                   </div>
                   
-                  {/* System Console - Now part of flex flow */}
-                  <SystemLog logs={systemLogs} isOpen={isConsoleOpen} toggle={() => setIsConsoleOpen(!isConsoleOpen)} />
+                  {/* System Console - Replaced SystemLog with Console */}
+                  <Console 
+                      systemLogs={systemLogs} 
+                      aiLogs={aiLogs} 
+                      isOpen={isConsoleOpen} 
+                      toggle={() => setIsConsoleOpen(!isConsoleOpen)} 
+                  />
               </div>
 
           </main>

@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { LogType } from '../types';
 
 const SYSTEM_INSTRUCTION = `You are a specialist Arabic literary translator and editor working for a prestigious publishing house that specialises in English-to-Arabic translation. 
 Your task is to translate the provided HTML content into professional, native-level Arabic, strictly preserving the HTML structure.
@@ -11,8 +12,10 @@ Rules:
 6.  Preserve all numeric values in their original form.
 `;
 
+type LoggerCallback = (msg: string, type: LogType, data?: any) => void;
+
 export const geminiService = {
-  async translateHtml(html: string): Promise<string> {
+  async translateHtml(html: string, onLog?: LoggerCallback): Promise<string> {
     if (!process.env.API_KEY) {
       throw new Error("API Key is missing.");
     }
@@ -25,6 +28,14 @@ export const geminiService = {
         setTimeout(() => reject(new Error("Request timed out")), 600000); // 10m timeout
       });
 
+      onLog?.("Preparing translation request...", 'INFO', { 
+          inputLength: html.length,
+          preview: html.substring(0, 100) + (html.length > 100 ? '...' : ''),
+          model: 'gemini-3-flash-preview'
+      });
+
+      const startTime = Date.now();
+
       const requestPromise = ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: html,
@@ -35,8 +46,18 @@ export const geminiService = {
         }
       });
 
+      onLog?.("Sending request to Gemini API...", 'INFO');
+
       // Race against timeout
       const response = await Promise.race([requestPromise, timeoutPromise]);
+      
+      const duration = Date.now() - startTime;
+      
+      onLog?.(`Response received in ${duration}ms`, 'SUCCESS', {
+          candidates: response.candidates?.length,
+          finishReason: response.candidates?.[0]?.finishReason,
+          usageMetadata: response.usageMetadata
+      });
 
       const translatedText = response.text?.trim();
       
@@ -47,18 +68,24 @@ export const geminiService = {
       // Cleanup: remove markdown block symbols if Gemini adds them despite instructions
       const cleanHtml = translatedText.replace(/^```html/, '').replace(/```$/, '').trim();
 
-      if (!this.validateIntegrity(html, cleanHtml)) {
+      if (!this.validateIntegrity(html, cleanHtml, onLog)) {
         throw new Error("Integrity Check Failed: Tag mismatch detected.");
       }
+      
+      onLog?.("Validation passed. Segment complete.", 'SUCCESS');
 
       return cleanHtml;
     } catch (error) {
       console.error("Gemini Translation Error:", error);
+      onLog?.("Translation process failed", 'ERROR', {
+          error: (error as Error).message,
+          stack: (error as Error).stack
+      });
       throw error;
     }
   },
 
-  validateIntegrity(original: string, translated: string): boolean {
+  validateIntegrity(original: string, translated: string, onLog?: LoggerCallback): boolean {
     const getTags = (str: string) => {
       // Regex to match opening and closing tags, ignoring attributes
       return (str.match(/<\/?\w+/g) || []).sort();
@@ -68,14 +95,18 @@ export const geminiService = {
     const translatedTags = getTags(translated);
 
     if (originalTags.length !== translatedTags.length) {
-      console.warn(`Tag count mismatch. Orig: ${originalTags.length}, Trans: ${translatedTags.length}`);
+      const msg = `Tag count mismatch. Orig: ${originalTags.length}, Trans: ${translatedTags.length}`;
+      console.warn(msg);
+      onLog?.("Integrity check warning", 'WARNING', { message: msg, originalTags, translatedTags });
       return false;
     }
 
     // Strict equality check on sorted tags
     for (let i = 0; i < originalTags.length; i++) {
       if (originalTags[i] !== translatedTags[i]) {
-        console.warn(`Tag mismatch at index ${i}: ${originalTags[i]} vs ${translatedTags[i]}`);
+        const msg = `Tag mismatch at index ${i}: ${originalTags[i]} vs ${translatedTags[i]}`;
+        console.warn(msg);
+        onLog?.("Integrity check warning", 'WARNING', { message: msg });
         return false;
       }
     }

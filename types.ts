@@ -61,6 +61,14 @@ export interface SystemLogEntry {
   type: LogType;
 }
 
+export interface AIDebugLogEntry {
+  id: string;
+  timestamp: number;
+  message: string;
+  type: LogType;
+  data?: any;
+}
+
 export interface LiveLogItem {
   id: string;
   orig: string;

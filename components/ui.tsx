@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Loader2, Terminal, AlertTriangle, X, Maximize2, Minimize2, Info, GripVertical } from 'lucide-react';
-import { Segment, SystemLogEntry } from '../types';
+import { Loader2, Terminal, AlertTriangle, X, Maximize2, Minimize2, Info, GripVertical, Bot, Activity, ChevronRight, ChevronDown, FileJson } from 'lucide-react';
+import { Segment, SystemLogEntry, AIDebugLogEntry } from '../types';
 
 // --- Primitives ---
 
@@ -147,63 +147,162 @@ export const SegmentMap = ({ segments, onClickSegment }: { segments: Segment[], 
   );
 };
 
-export const SystemLog = ({ logs, isOpen, toggle }: { logs: SystemLogEntry[], isOpen: boolean, toggle: () => void }) => {
+// Replaces SystemLog
+export const Console = ({ systemLogs, aiLogs, isOpen, toggle }: { systemLogs: SystemLogEntry[], aiLogs: AIDebugLogEntry[], isOpen: boolean, toggle: () => void }) => {
+  const [tab, setTab] = useState<'SYSTEM' | 'AI'>('SYSTEM');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
 
+  // Auto-scroll logic
   useEffect(() => {
-    if (scrollRef.current && isOpen) {
+    if (scrollRef.current && autoScroll && isOpen) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [logs, isOpen]);
+  }, [systemLogs, aiLogs, isOpen, tab, autoScroll]);
+
+  const handleScroll = () => {
+      if (!scrollRef.current) return;
+      const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+      // If user scrolls up, disable autoscroll. If they are near bottom, enable it.
+      const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+      setAutoScroll(isAtBottom);
+  };
 
   return (
-    <div className={`bg-slate-900 border-t border-slate-800 flex flex-col transition-all duration-300 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-20 ${isOpen ? 'h-64' : 'h-10'}`}>
-        <div 
-            onClick={toggle}
-            className="h-10 flex items-center justify-between px-4 cursor-pointer hover:bg-slate-800 transition-colors shrink-0 group"
-        >
-            <div className="flex items-center gap-3 text-xs font-mono text-slate-400 group-hover:text-slate-300">
-                <div className={`p-1 rounded ${isOpen ? 'bg-slate-800' : 'bg-slate-800/50'}`}>
-                   <Terminal className="w-3.5 h-3.5" />
-                </div>
-                <span className="font-semibold uppercase tracking-wider">System Console</span>
-                {logs.length > 0 && <span className="bg-slate-800 px-1.5 py-0.5 rounded text-[10px] text-slate-500">{logs.length}</span>}
-                {!isOpen && logs.length > 0 && (
-                    <span className="text-slate-600 truncate max-w-[300px] border-l border-slate-700 pl-3 ml-1 opacity-70">
-                        {logs[logs.length-1].message}
-                    </span>
-                )}
+    <div className={`bg-slate-900 border-t border-slate-800 flex flex-col transition-all duration-300 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-20 ${isOpen ? 'h-72' : 'h-10'}`}>
+        
+        {/* Header Bar */}
+        <div className="h-10 flex items-center justify-between px-2 bg-slate-950/50 border-b border-white/5 shrink-0">
+            <div className="flex items-center">
+                 <button 
+                    onClick={toggle}
+                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 rounded-md transition-colors mr-2 text-slate-400 hover:text-slate-300"
+                 >
+                    <Terminal className="w-4 h-4" />
+                    <span className="text-xs font-bold tracking-wider uppercase">Console</span>
+                 </button>
+
+                 <div className="h-4 w-px bg-white/10 mx-2"></div>
+                 
+                 <div className="flex bg-slate-900 rounded p-0.5 border border-white/5">
+                     <button 
+                        onClick={() => { setTab('SYSTEM'); setAutoScroll(true); }}
+                        className={`flex items-center gap-2 px-3 py-1 rounded-[3px] text-[10px] font-medium transition-all ${tab === 'SYSTEM' ? 'bg-slate-800 text-slate-200 shadow-sm' : 'text-slate-500 hover:text-slate-400'}`}
+                     >
+                         <Activity className="w-3 h-3" />
+                         <span>System</span>
+                         {systemLogs.length > 0 && <span className="bg-slate-700/50 px-1.5 rounded-full text-[9px] ml-1">{systemLogs.length}</span>}
+                     </button>
+                     <button 
+                        onClick={() => { setTab('AI'); setAutoScroll(true); }}
+                        className={`flex items-center gap-2 px-3 py-1 rounded-[3px] text-[10px] font-medium transition-all ${tab === 'AI' ? 'bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 shadow-sm' : 'text-slate-500 hover:text-slate-400'}`}
+                     >
+                         <Bot className="w-3 h-3" />
+                         <span>AI Trace</span>
+                         {aiLogs.length > 0 && <span className="bg-indigo-500/20 px-1.5 rounded-full text-[9px] text-indigo-200 ml-1">{aiLogs.length}</span>}
+                     </button>
+                 </div>
             </div>
-            <div className="text-slate-600 group-hover:text-slate-400">
-                {isOpen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+
+            <div className="flex items-center gap-2">
+                 {!isOpen && (
+                     <div className="flex items-center gap-2 text-[10px] text-slate-500 mr-4">
+                        {tab === 'SYSTEM' && systemLogs.length > 0 && <span className="truncate max-w-[200px] opacity-70 border-l border-slate-700 pl-2">{systemLogs[systemLogs.length-1].message}</span>}
+                        {tab === 'AI' && aiLogs.length > 0 && <span className="truncate max-w-[200px] opacity-70 border-l border-slate-700 pl-2">{aiLogs[aiLogs.length-1].message}</span>}
+                     </div>
+                 )}
+                 <button onClick={toggle} className="text-slate-500 hover:text-slate-300 p-1 rounded hover:bg-white/5 transition-colors">
+                    {isOpen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                 </button>
             </div>
         </div>
 
+        {/* Content */}
         {isOpen && (
-            <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-1 font-mono text-xs text-slate-300 bg-slate-950/50">
-                {logs.map((log) => (
-                <div key={log.id} className="flex gap-3 hover:bg-white/5 p-1 rounded-sm transition-colors">
-                    <span className="text-slate-600 shrink-0 select-none w-14 text-right">
-                        {new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })}
-                    </span>
-                    <span className={`break-words flex-1 ${
-                    log.type === 'ERROR' ? 'text-rose-400' :
-                    log.type === 'SUCCESS' ? 'text-emerald-400' :
-                    log.type === 'WARNING' ? 'text-amber-400' :
-                    'text-slate-300'
-                    }`}>
-                    {log.type === 'ERROR' && <span className="mr-1 inline-block text-rose-500">✖</span>}
-                    {log.type === 'SUCCESS' && <span className="mr-1 inline-block text-emerald-500">✔</span>}
-                    {log.type === 'WARNING' && <span className="mr-1 inline-block text-amber-500">⚠</span>}
-                    {log.message}
-                    </span>
-                </div>
-                ))}
+            <div 
+                ref={scrollRef} 
+                onScroll={handleScroll}
+                className="flex-1 overflow-y-auto p-4 space-y-1 font-mono text-xs bg-slate-950 custom-scrollbar"
+            >
+                {tab === 'SYSTEM' ? (
+                    systemLogs.length === 0 ? <div className="text-slate-700 italic px-2">No system logs.</div> :
+                    systemLogs.map((log) => (
+                        <div key={log.id} className="flex gap-3 hover:bg-white/5 p-1 rounded-sm transition-colors group">
+                            <span className="text-slate-600 shrink-0 select-none w-16 text-right text-[10px] pt-0.5">
+                                {new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })}
+                            </span>
+                            <span className={`break-words flex-1 ${
+                            log.type === 'ERROR' ? 'text-rose-400' :
+                            log.type === 'SUCCESS' ? 'text-emerald-400' :
+                            log.type === 'WARNING' ? 'text-amber-400' :
+                            'text-slate-300'
+                            }`}>
+                            {log.type === 'ERROR' && <span className="mr-2 inline-block text-rose-500 font-bold">✖</span>}
+                            {log.type === 'SUCCESS' && <span className="mr-2 inline-block text-emerald-500 font-bold">✔</span>}
+                            {log.type === 'WARNING' && <span className="mr-2 inline-block text-amber-500 font-bold">⚠</span>}
+                            {log.message}
+                            </span>
+                        </div>
+                    ))
+                ) : (
+                    aiLogs.length === 0 ? <div className="text-slate-700 italic px-2">No AI logs recorded.</div> :
+                    aiLogs.map((log) => (
+                        <AILogRow key={log.id} log={log} />
+                    ))
+                )}
             </div>
         )}
     </div>
   );
 };
+
+const AILogRow = ({ log }: { log: AIDebugLogEntry }) => {
+    const [expanded, setExpanded] = useState(false);
+    
+    return (
+        <div className={`rounded-sm transition-colors ${expanded ? 'bg-white/5' : 'hover:bg-white/5'}`}>
+            <div 
+                onClick={() => log.data && setExpanded(!expanded)} 
+                className={`flex gap-3 p-1 ${log.data ? 'cursor-pointer' : ''}`}
+            >
+                <span className="text-indigo-400/60 shrink-0 select-none w-16 text-right text-[10px] pt-0.5 font-mono">
+                    {new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' })}
+                </span>
+                
+                <div className="flex-1 flex gap-2 overflow-hidden">
+                    {log.data ? (
+                        <div className="mt-0.5 text-slate-500 shrink-0">
+                            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                        </div>
+                    ) : (
+                        <div className="w-3 shrink-0"></div>
+                    )}
+
+                    <div className="flex-1 min-w-0">
+                        <span className={`block truncate ${
+                            log.type === 'ERROR' ? 'text-rose-400' :
+                            log.type === 'SUCCESS' ? 'text-emerald-400' :
+                            log.type === 'WARNING' ? 'text-amber-400' :
+                            'text-indigo-200'
+                        }`}>
+                            {log.message}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            
+            {expanded && log.data && (
+                <div className="pl-20 pr-4 pb-2 text-[10px]">
+                    <div className="bg-slate-900 rounded border border-white/10 p-2 overflow-x-auto relative group/code">
+                        <pre className="text-slate-400 font-mono whitespace-pre-wrap break-all">
+                            {JSON.stringify(log.data, null, 2)}
+                        </pre>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
 
 export const BookPage = ({ title, content, lang = 'en', isLoading = false, isEmpty = false, fontSize = 18, fontType = 'serif' }: { title: string, content: string | null, lang?: 'en' | 'ar', isLoading?: boolean, isEmpty?: boolean, fontSize?: number, fontType?: 'serif' | 'sans' }) => {
     
