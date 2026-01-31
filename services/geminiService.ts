@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { LogType } from '../types';
 
 const SYSTEM_INSTRUCTION = `You are a specialist Arabic literary translator and editor working for a prestigious publishing house that specialises in English-to-Arabic translation. 
@@ -31,17 +31,28 @@ export const geminiService = {
       onLog?.("Preparing translation request...", 'INFO', { 
           inputLength: html.length,
           preview: html.substring(0, 100) + (html.length > 100 ? '...' : ''),
-          model: 'gemini-3-flash-preview'
+          model: 'gemini-3-pro-preview'
       });
 
       const startTime = Date.now();
 
+      // Configure safety settings to be permissive for literary content
+      // which may contain violence, romance, or sensitive themes.
+      const safetySettings = [
+        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE }
+      ];
+
       const requestPromise = ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: html,
+        model: 'gemini-3-pro-preview',
+        contents: { parts: [{ text: html }] },
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
-          temperature: 0, // Lower temperature for more faithful translation
+          temperature: 0.3, // Slightly higher temperature to avoid deterministic refusal loops
+          safetySettings: safetySettings,
           // thinkingConfig: { thinkingBudget: 0 }
         }
       });
@@ -53,16 +64,22 @@ export const geminiService = {
       
       const duration = Date.now() - startTime;
       
+      const finishReason = response.candidates?.[0]?.finishReason;
+
       onLog?.(`Response received in ${duration}ms`, 'SUCCESS', {
           candidates: response.candidates?.length,
-          finishReason: response.candidates?.[0]?.finishReason,
+          finishReason: finishReason,
           usageMetadata: response.usageMetadata
       });
 
       const translatedText = response.text?.trim();
       
       if (!translatedText) {
-        throw new Error("Empty response from AI");
+        // If text is empty, it's likely a safety block or finish reason issue
+        if (finishReason && finishReason !== 'STOP') {
+             throw new Error(`AI Generation Failed: ${finishReason}`);
+        }
+        throw new Error("Empty response from AI (No text generated)");
       }
 
       // Cleanup: remove markdown block symbols if Gemini adds them despite instructions
