@@ -1,0 +1,5 @@
+{
+  "name": "Mutarjim Pro",
+  "description": "Enterprise-grade, offline-first EPUB translator using Google Gemini. Converts English books to Arabic with structure preservation.",
+  "requestFramePermissions": []
+}
