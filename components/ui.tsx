@@ -149,7 +149,7 @@ export const SegmentMap = ({ segments, onClickSegment }: { segments: Segment[], 
 
 // Replaces SystemLog
 
-const AILogRow = ({ log }: { log: AIDebugLogEntry }) => {
+const AILogRow: React.FC<{ log: AIDebugLogEntry }> = ({ log }) => {
     const [expanded, setExpanded] = useState(false);
     
     return (

@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { LogType } from '../types';
 
@@ -38,7 +39,7 @@ export const geminiService = {
     ];
 
     // Fallback strategy: Try Pr o model first, then Flash if Pro is too strict/busy
-    const modelsToTry = ['gemini-3-pro-preview',  'gemini-2.5-pro', 'gemini-2.5-flash'];
+    const modelsToTry = ['gemini-3-pro-preview',  'gemini-2.5-pro'];
     // If some parts include offensive or sensitive content, the API will always return an empty response. Reduce temperature to 0.3 to 1 and Replace the models with the following: 'gemini-2.0-flash', 'gemini-2.0-flash-lite'
     // Replace the system prompt with this:
     /*
@@ -124,6 +125,18 @@ Rules:
 
     onLog?.("All models failed to translate segment.", 'ERROR');
     throw lastError || new Error("Translation failed on all available models.");
+  },
+
+  async translateTitle(title: string): Promise<string> {
+    if (!process.env.API_KEY) throw new Error("API Key is missing.");
+
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: { parts: [{ text: `Translate this book title into Arabic. Return ONLY the Arabic title, no other text. Title: "${title}"` }] },
+    });
+    
+    return response.text?.trim() || "";
   },
 
   validateIntegrity(original: string, translated: string, onLog?: LoggerCallback): boolean {

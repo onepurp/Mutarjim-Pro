@@ -1,5 +1,6 @@
+
 import JSZip from 'jszip';
-import { AnalysisResult, Segment, SegmentStatus, ProjectData } from '../types';
+import { AnalysisResult, Segment, SegmentStatus, ProjectData, ExportSettings } from '../types';
 
 const BLOCK_TAGS = ['p', 'div', 'blockquote', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'section', 'article', 'aside', 'main', 'header', 'footer'];
 const BREAKER_TAGS = ['img', 'hr', 'table', 'pre', 'svg', 'figure'];
@@ -258,10 +259,26 @@ export const epubService = {
     return segments;
   },
 
-  async reassembleEpub(originalBlob: Blob, segments: Segment[], customCoverBlob?: Blob, options?: { arabicTitle?: string, author?: string, originalTitle?: string, schemaVersion?: number }): Promise<Blob> {
+  async reassembleEpub(
+      originalBlob: Blob, 
+      segments: Segment[], 
+      customCoverBlob?: Blob, 
+      options?: { 
+          arabicTitle?: string, 
+          author?: string, 
+          originalTitle?: string, 
+          schemaVersion?: number,
+          exportSettings?: ExportSettings 
+      }
+  ): Promise<Blob> {
     const jszip = new JSZip();
     const zip = await jszip.loadAsync(originalBlob);
     const isV2 = options?.schemaVersion === 2;
+
+    const settings: ExportSettings = options?.exportSettings || {
+        textAlignment: 'right',
+        forceAlignment: false
+    };
 
     const segmentsByFile: Record<string, Segment[]> = {};
     segments.forEach(s => {
@@ -278,9 +295,64 @@ export const epubService = {
       const parser = new DOMParser();
       const doc = parser.parseFromString(content, 'application/xhtml+xml');
       
+      // 1. Basic RTL attributes (Standard for Arabic)
       doc.body.setAttribute('dir', 'rtl');
       doc.body.setAttribute('lang', 'ar');
       doc.documentElement.setAttribute('lang', 'ar');
+
+      // 2. Generate CSS based on alignment settings
+      const alignVal = settings.textAlignment;
+      const isForced = settings.forceAlignment;
+      const importance = isForced ? '!important' : '';
+
+      let alignmentCss = `
+        html, body {
+            direction: rtl ${importance};
+        }
+      `;
+
+      if (isForced) {
+           // Aggressive override: Targets common block elements to force alignment
+           alignmentCss += `
+             html, body, p, div, h1, h2, h3, h4, h5, h6, li, blockquote, dd, dt, article, section {
+                 text-align: ${alignVal} ${importance};
+             }
+           `;
+           // If Justify is forced, we might need extra properties for better rendering
+           if (alignVal === 'justify') {
+               alignmentCss += `
+                 html, body, p, div, li {
+                     text-justify: inter-word ${importance};
+                 }
+               `;
+           }
+      } else {
+           // Soft override: Only set default on body/html.
+           // This allows specific styles in the book (e.g. <p class="center">) to take precedence via CSS specificity.
+           alignmentCss += `
+             html, body {
+                 text-align: ${alignVal};
+             }
+             /* Protect tables and lists from breaking structure while keeping RTL */
+             ul, ol, table {
+                 direction: rtl; 
+             }
+           `;
+      }
+
+      const styleEl = doc.createElement('style');
+      styleEl.textContent = alignmentCss;
+      
+      // Prepend to HEAD to allow original styles to override if forceAlignment is false
+      if (doc.head) {
+        if (doc.head.firstChild) {
+            doc.head.insertBefore(styleEl, doc.head.firstChild);
+        } else {
+            doc.head.appendChild(styleEl);
+        }
+      } else if (doc.body) {
+        doc.body.insertBefore(styleEl, doc.body.firstChild);
+      }
 
       let segmentIndex = 0;
       let currentBatchNodes: Node[] = []; 
@@ -293,8 +365,6 @@ export const epubService = {
         
         if (segment && segment.status === SegmentStatus.TRANSLATED) {
            const firstNode = currentBatchNodes[0];
-           // We use the first node's parent as the anchor for INSERTION.
-           // However, deletion must be handled per-node (see below).
            const insertionParent = firstNode.parentElement; 
            
            if (insertionParent) {
@@ -329,25 +399,18 @@ export const epubService = {
                 }
              }
 
-             // 1. INSERTION: Add new nodes before the first node of the batch
+             // 1. INSERTION
              for (const node of nodesToInsert) {
                if (node.nodeType === Node.ELEMENT_NODE) {
+                  // Ensure explicit RTL direction on inserted blocks if needed
                   (node as Element).setAttribute('dir', 'rtl');
                }
                insertionParent.insertBefore(node, firstNode);
              }
              
-             // 2. DELETION: Safe Removal Logic
-             // We iterate through the EXACT nodes collected during traversal.
-             // We use n.parentNode.removeChild(n) which is the DOM standard for "remove this specific object".
+             // 2. DELETION
              currentBatchNodes.forEach(n => {
-                // SAFETY: Root/Body Guard. 
-                // Ensure we never inadvertently delete the document structure even if logic fails.
                 if (n.nodeName === 'BODY' || n.nodeName === 'HTML' || n.nodeName === 'HEAD') return;
-
-                // SAFETY: Existence Check.
-                // Only remove if it has a parent (i.e., it is currently in the DOM).
-                // This prevents errors if a node was already removed (unlikely) or if it's a detached node.
                 if (n.parentNode) {
                     n.parentNode.removeChild(n);
                 }
@@ -479,27 +542,31 @@ export const epubService = {
          const opfStr = await zip.file(opfPath)?.async('string');
          if (opfStr) {
            const opfDoc = new DOMParser().parseFromString(opfStr, 'application/xml');
+           
+           // 3a. Update Spine Direction
+           const spine = opfDoc.getElementsByTagName('spine')[0] || opfDoc.getElementsByTagNameNS('*', 'spine')[0];
+           if (spine) {
+               spine.setAttribute('page-progression-direction', 'rtl');
+           }
+
            const metadata = opfDoc.getElementsByTagName('metadata')[0] || opfDoc.getElementsByTagNameNS('*', 'metadata')[0];
            if (metadata) {
+             // Language Update
              let langEl = metadata.getElementsByTagName('language')[0] || metadata.getElementsByTagNameNS('*', 'language')[0];
              if (!langEl) {
-               langEl = opfDoc.createElementNS('http://purl.org/dc/elements/1.1/', 'dc:language');
-               metadata.appendChild(langEl);
+                langEl = opfDoc.createElementNS('http://purl.org/dc/elements/1.1/', 'dc:language');
+                metadata.appendChild(langEl);
              }
              langEl.textContent = 'ar';
              
              const titleEl = metadata.getElementsByTagName('title')[0] || metadata.getElementsByTagNameNS('*', 'title')[0];
              if (titleEl) {
                  if (options?.arabicTitle) {
-                     const arTitle = options.arabicTitle;
-                     const auth = options.author || 'Unknown Author';
-                     const origTitle = options.originalTitle || 'Unknown Title';
-                     titleEl.textContent = `${arTitle} - ${auth} (مترجم) [${origTitle}]`;
-                 } else if (titleEl.textContent && !titleEl.textContent.includes('(مترجم)')) {
-                    titleEl.textContent = `(مترجم) ${titleEl.textContent}`;
+                     titleEl.textContent = options.arabicTitle;
                  }
              }
            }
+
            zip.file(opfPath, new XMLSerializer().serializeToString(opfDoc));
          }
        }

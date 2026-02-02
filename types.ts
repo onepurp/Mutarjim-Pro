@@ -1,3 +1,4 @@
+
 export enum SegmentStatus {
   PENDING = 'PENDING',
   TRANSLATING = 'TRANSLATING',
@@ -27,6 +28,11 @@ export interface Segment {
   error?: string;
 }
 
+export interface ExportSettings {
+  textAlignment: 'right' | 'center' | 'left' | 'justify';
+  forceAlignment: boolean; // If true, uses !important to override original styles
+}
+
 export interface ProjectData {
   id: string; // usually 'current-project' for single project app
   title: string;
@@ -39,6 +45,7 @@ export interface ProjectData {
   sourceEpubBlob: Blob;
   createdAt: number;
   schemaVersion?: number; // 1 = legacy (elements only), 2 = v2 (nodes)
+  exportSettings?: ExportSettings;
 }
 
 export interface AnalysisResult {

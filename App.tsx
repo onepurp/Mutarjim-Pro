@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Upload, Book, Play, Pause, Download, AlertCircle, Save, FolderOpen, Image as ImageIcon, Settings, Home, FileText, ChevronRight, ChevronLeft, Edit3, RefreshCw, X, Check, Globe, LogOut, Type, Minus, Plus } from 'lucide-react';
-import { AppState, ProjectData, Segment, SegmentStatus, SystemLogEntry, LogType, LiveLogItem, AIDebugLogEntry } from './types';
+import { Upload, Book, Play, Pause, Download, AlertCircle, Save, FolderOpen, Image as ImageIcon, Settings, Home, FileText, ChevronRight, ChevronLeft, Edit3, RefreshCw, X, Check, Globe, LogOut, Type, Minus, Plus, AlignLeft, AlignCenter, AlignRight, AlignJustify, Layout, Wand2 } from 'lucide-react';
+import { AppState, ProjectData, Segment, SegmentStatus, SystemLogEntry, LogType, LiveLogItem, AIDebugLogEntry, ExportSettings } from './types';
 import { dbService } from './services/db';
 import { epubService } from './services/epubService';
 import { geminiService } from './services/geminiService';
@@ -22,11 +23,22 @@ const App = () => {
   const [activeSegmentIndex, setActiveSegmentIndex] = useState<number>(-1);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editArabicTitle, setEditArabicTitle] = useState('');
+  const [isTranslatingTitle, setIsTranslatingTitle] = useState(false);
+  const [editExportSettings, setEditExportSettings] = useState<ExportSettings>({
+      textAlignment: 'right',
+      forceAlignment: false
+  });
   const [fileInputKey, setFileInputKey] = useState(0);
 
   // Appearance State
   const [fontSize, setFontSize] = useState<number>(18);
   const [fontType, setFontType] = useState<'serif' | 'sans'>('serif');
+
+  // Export Settings State
+  const [exportSettings, setExportSettings] = useState<ExportSettings>({
+      textAlignment: 'right',
+      forceAlignment: false
+  });
 
   // Refs for processing loop
   const processingRef = useRef<boolean>(false);
@@ -66,6 +78,12 @@ const App = () => {
                   proj.coverUrl = URL.createObjectURL(proj.customCoverBlob);
               }
               setProject(proj);
+              
+              // Load saved export settings if available
+              if (proj.exportSettings) {
+                  setExportSettings(proj.exportSettings);
+              }
+
               const segs = await dbService.getAllSegments();
               setSegments(segs);
               
@@ -143,21 +161,29 @@ const App = () => {
       if (!project) return;
       try {
           addLog("Bundling EPUB...", 'INFO');
+          // Update project with current settings before export
+          const updatedProject = { ...project, exportSettings };
+          await dbService.saveProject(updatedProject);
+          setProject(updatedProject);
+
           const blob = await epubService.reassembleEpub(
-              project.sourceEpubBlob, 
+              updatedProject.sourceEpubBlob, 
               await dbService.getAllSegments(), 
-              project.customCoverBlob, 
+              updatedProject.customCoverBlob, 
               { 
-                  arabicTitle: project.arabicTitle, 
-                  author: project.author, 
-                  originalTitle: project.title,
-                  schemaVersion: project.schemaVersion // Pass schema version for reliable export
+                  arabicTitle: updatedProject.arabicTitle, 
+                  author: updatedProject.author, 
+                  originalTitle: updatedProject.title,
+                  schemaVersion: updatedProject.schemaVersion, // Pass schema version for reliable export
+                  exportSettings: updatedProject.exportSettings
               }
           );
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = `${project.arabicTitle || "Translated"} - ${project.author}.epub`;
+          // Format: <the title in arabic> (مترجم) [Arabic Translation] [<original title> - <author>].epub
+          const arabicTitle = updatedProject.arabicTitle || "Translated Book";
+          a.download = `${arabicTitle} (مترجم) [Arabic Translation] [${updatedProject.title} - ${updatedProject.author}].epub`;
           a.click();
           addLog("Export complete.", 'SUCCESS');
       } catch (e) {
@@ -171,7 +197,27 @@ const App = () => {
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = `mutarjim_backup_${Date.now()}.mtj`;
+          
+          if (project) {
+              const titlePart = project.title
+                 .split('.')[0]
+                 .replace(/[^a-zA-Z0-9\u0600-\u06FF\s\-_]/g, '')
+                 .trim()
+                 .replace(/\s+/g, '_');
+                 
+              const progress = project.totalSegments > 0 
+                  ? Math.round((project.translatedSegments / project.totalSegments) * 100) 
+                  : 0;
+              
+              const now = new Date();
+              const dateStr = now.toISOString().split('T')[0];
+              const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+              
+              a.download = `${titlePart || 'backup'}_${progress}%_${dateStr}_${timeStr}.mtj`;
+          } else {
+              a.download = `mutarjim_backup_${Date.now()}.mtj`;
+          }
+
           a.click();
           addLog("Backup downloaded.", 'SUCCESS');
       } catch (e) {
@@ -186,6 +232,27 @@ const App = () => {
           setSegments([]);
           setView('landing');
           addLog("Project deleted.", 'WARNING');
+      }
+  };
+
+  const openProjectSettings = () => {
+      if (!project) return;
+      setEditArabicTitle(project.arabicTitle || '');
+      setEditExportSettings(project.exportSettings || { textAlignment: 'right', forceAlignment: false });
+      setIsEditModalOpen(true);
+  };
+
+  const handleMagicTranslate = async () => {
+      if (!project || isTranslatingTitle) return;
+      
+      setIsTranslatingTitle(true);
+      try {
+          const translatedTitle = await geminiService.translateTitle(project.title);
+          setEditArabicTitle(translatedTitle);
+      } catch (e) {
+          console.error("Failed to translate title", e);
+      } finally {
+          setIsTranslatingTitle(false);
       }
   };
 
@@ -452,10 +519,7 @@ const App = () => {
                       {project.arabicTitle && (
                           <div className="bg-brand-50 text-brand-700 px-3 py-1 rounded-full text-sm font-arabic">{project.arabicTitle}</div>
                       )}
-                      <Button variant="ghost" size="sm" className="mt-2 text-xs" onClick={() => {
-                          setEditArabicTitle(project.arabicTitle || '');
-                          setIsEditModalOpen(true);
-                      }}>
+                      <Button variant="ghost" size="sm" className="mt-2 text-xs" onClick={openProjectSettings}>
                           Edit Details
                       </Button>
                   </div>
@@ -550,9 +614,12 @@ const App = () => {
                            <button onClick={() => setFontSize(s => Math.min(32, s + 2))} className="p-1.5 hover:bg-white rounded shadow-sm text-slate-600 transition-colors"><Plus className="w-3 h-3"/></button>
                        </div>
 
-                       <Button variant="primary" onClick={handleExport} disabled={appState === AppState.TRANSLATING}>
-                           <Download className="w-4 h-4 mr-2" /> Export EPUB
-                       </Button>
+                        {/* Export Controls */}
+                       <div className="flex items-center gap-1">
+                            <Button variant="primary" onClick={handleExport} disabled={appState === AppState.TRANSLATING}>
+                                <Download className="w-4 h-4 mr-2" /> Export EPUB
+                            </Button>
+                       </div>
                    </div>
               </header>
 
@@ -586,29 +653,108 @@ const App = () => {
 
           </main>
 
-          {/* Modals */}
-          <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} title="Project Metadata">
+          {/* Project Settings Modal (Merged Metadata & Alignment) */}
+          <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} title="Project Settings">
               <div className="space-y-4">
+                  {/* Metadata Section */}
                   <div>
-                      <Label>Original Title</Label>
-                      <Input value={project.title} disabled className="bg-slate-50" />
+                      <Label>Book Title (Arabic)</Label>
+                      <div className="flex gap-2">
+                        <Input 
+                            value={editArabicTitle} 
+                            onChange={(e) => setEditArabicTitle(e.target.value)} 
+                            placeholder="e.g. الكتاب المترجم"
+                            dir="rtl"
+                            className="font-arabic"
+                        />
+                        <Button 
+                            variant="secondary" 
+                            size="icon" 
+                            onClick={handleMagicTranslate}
+                            disabled={isTranslatingTitle}
+                            title="Auto-translate title"
+                            className="shrink-0"
+                        >
+                             {isTranslatingTitle ? <Spinner className="w-4 h-4" /> : <Wand2 className="w-4 h-4 text-brand-600" />}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">This title will be used inside the EPUB and for the filename.</p>
                   </div>
-                  <div>
-                      <Label>Arabic Title (Required for Export)</Label>
-                      <Input 
-                          value={editArabicTitle} 
-                          onChange={(e) => setEditArabicTitle(e.target.value)} 
-                          placeholder="e.g. الكتاب المترجم"
-                          dir="rtl"
-                          className="font-arabic"
-                      />
-                      <p className="text-xs text-slate-500 mt-1">This will be the title of the exported EPUB file.</p>
+
+                  {/* HTML Alignment Options */}
+                  <div className="space-y-4 pt-4 border-t border-slate-100">
+                      <h4 className="text-sm font-semibold text-slate-900">Text Alignment</h4>
+                      
+                      <div className="space-y-2">
+                        <Label>Global Text Direction</Label>
+                        <div className="flex gap-2">
+                            <Button 
+                                variant={editExportSettings.textAlignment === 'left' ? 'primary' : 'outline'} 
+                                onClick={() => setEditExportSettings(s => ({...s, textAlignment: 'left'}))}
+                                className="flex-1"
+                                title="Align Left"
+                                type="button"
+                            >
+                                <AlignLeft className="w-4 h-4 mr-2" /> Left
+                            </Button>
+                            <Button 
+                                variant={editExportSettings.textAlignment === 'center' ? 'primary' : 'outline'} 
+                                onClick={() => setEditExportSettings(s => ({...s, textAlignment: 'center'}))}
+                                className="flex-1"
+                                title="Align Center"
+                                type="button"
+                            >
+                                <AlignCenter className="w-4 h-4 mr-2" /> Center
+                            </Button>
+                            <Button 
+                                variant={editExportSettings.textAlignment === 'right' ? 'primary' : 'outline'} 
+                                onClick={() => setEditExportSettings(s => ({...s, textAlignment: 'right'}))}
+                                className="flex-1"
+                                title="Align Right (Standard Arabic)"
+                                type="button"
+                            >
+                                <AlignRight className="w-4 h-4 mr-2" /> Right
+                            </Button>
+                             <Button 
+                                variant={editExportSettings.textAlignment === 'justify' ? 'primary' : 'outline'} 
+                                onClick={() => setEditExportSettings(s => ({...s, textAlignment: 'justify'}))}
+                                className="flex-1"
+                                title="Justify"
+                                type="button"
+                            >
+                                <AlignJustify className="w-4 h-4 mr-2" /> Justify
+                            </Button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3 bg-amber-50 p-3 rounded-lg border border-amber-100">
+                          <input 
+                              type="checkbox" 
+                              id="forceAlignment" 
+                              checked={editExportSettings.forceAlignment} 
+                              onChange={(e) => setEditExportSettings(s => ({...s, forceAlignment: e.target.checked}))}
+                              className="w-4 h-4 mt-0.5 text-brand-600 rounded border-amber-300 focus:ring-amber-500"
+                          />
+                          <div className="flex-1">
+                            <label htmlFor="forceAlignment" className="text-sm font-medium text-amber-900 block mb-0.5">Force Alignment Override</label>
+                            <p className="text-xs text-amber-700 leading-relaxed">
+                                If checked, this applies <code>!important</code> to CSS rules, overriding existing styles (like centered poems or quotes). 
+                                Uncheck this to preserve the book's original specific formatting while setting a default base direction.
+                            </p>
+                          </div>
+                      </div>
                   </div>
-                  <div className="flex justify-end gap-2 mt-4">
+
+                  <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-slate-100">
                       <Button variant="secondary" onClick={() => setIsEditModalOpen(false)}>Cancel</Button>
                       <Button onClick={() => {
-                          const updated = { ...project, arabicTitle: editArabicTitle };
+                          const updated = { 
+                              ...project, 
+                              arabicTitle: editArabicTitle,
+                              exportSettings: editExportSettings
+                          };
                           setProject(updated);
+                          setExportSettings(editExportSettings);
                           dbService.saveProject(updated);
                           setIsEditModalOpen(false);
                       }}>Save Changes</Button>
