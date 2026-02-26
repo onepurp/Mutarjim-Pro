@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo, Component, ErrorInfo, ReactNode } from 'react';
-import { Loader2, Terminal, AlertTriangle, X, Maximize2, Minimize2, Info, GripVertical, Bot, Activity, ChevronRight, ChevronDown, FileJson, ShieldAlert } from 'lucide-react';
+import { Loader2, Terminal, AlertTriangle, X, Maximize2, Minimize2, Info, GripVertical, Bot, Activity, ChevronRight, ChevronDown, FileJson, ShieldAlert, Copy, Check, Edit3, RotateCcw } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Segment, SystemLogEntry, AIDebugLogEntry } from '../types';
@@ -509,24 +509,34 @@ export const BookPage = React.memo(({ title, content, lang = 'en', isLoading = f
 
     const sanitizedContent = useMemo(() => DOMPurify.sanitize(content || ''), [content]);
 
+    const [copied, setCopied] = useState(false);
+    const handleCopy = () => {
+        if (!content) return;
+        navigator.clipboard.writeText(content);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
     return (
-        <div className="flex flex-col h-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden relative group transition-all duration-300">
-            <div className="h-10 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between px-4 bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur-sm shrink-0">
-                 <span className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                     {lang === 'ar' ? <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> : <div className="w-1.5 h-1.5 rounded-full bg-sky-400" />}
-                     {title}
-                 </span>
-                 <div className="flex items-center gap-2">
-                     <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono opacity-0 group-hover:opacity-100 transition-opacity">
-                         {fontSize}px • {fontType}
+        <div className="flex flex-col h-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden relative transition-all duration-300">
+            <div className="h-12 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between px-4 bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur-sm shrink-0">
+                 <div className="flex items-center gap-3">
+                     <div className={`w-2 h-2 rounded-full ${lang === 'ar' ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]' : 'bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.5)]'}`} />
+                     <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                         {title}
                      </span>
+                 </div>
+                 <div className="flex items-center gap-3">
+                     <button onClick={handleCopy} disabled={!content} className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-md hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors disabled:opacity-50" title="Copy HTML">
+                         {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                     </button>
                  </div>
             </div>
             
             <div className={`flex-1 overflow-y-auto p-8 custom-scrollbar relative ${lang === 'ar' ? 'text-right' : 'text-left'}`}>
                 {isEmpty && !isLoading && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-300 dark:text-slate-600 select-none">
-                        <div className="w-16 h-16 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-full flex items-center justify-center mb-4 bg-slate-50 dark:bg-slate-800">
+                        <div className="w-16 h-16 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-full flex items-center justify-center mb-4 bg-slate-50 dark:bg-slate-800/50">
                             <Info className="w-6 h-6 text-slate-300 dark:text-slate-600" />
                         </div>
                         <p className="text-sm font-medium">No content loaded</p>
@@ -535,9 +545,9 @@ export const BookPage = React.memo(({ title, content, lang = 'en', isLoading = f
                 
                 {isLoading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-white/80 dark:bg-slate-800/80 backdrop-blur-[2px] z-10 animate-in fade-in duration-300">
-                        <div className="flex flex-col items-center gap-3 bg-white dark:bg-slate-800 p-6 rounded-lg shadow-xl border border-slate-100 dark:border-slate-700">
-                            <Spinner className="w-8 h-8 text-sky-500" />
-                            <p className="text-xs font-bold text-sky-500 animate-pulse tracking-wide uppercase">Translating Segment...</p>
+                        <div className="flex flex-col items-center gap-3 bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl border border-slate-100 dark:border-slate-700">
+                            <Loader2 className="w-8 h-8 text-sky-500 animate-spin" />
+                            <p className="text-xs font-bold text-sky-500 tracking-wide uppercase">Translating Segment...</p>
                         </div>
                     </div>
                 )}
@@ -559,6 +569,14 @@ export const SplitView = React.memo(({ original, translated, onTranslatedChange,
     });
     const containerRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
+    const [copied, setCopied] = useState(false);
+
+    const handleCopy = () => {
+        if (!translated) return;
+        navigator.clipboard.writeText(translated);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
 
     const handleMouseDown = (e: React.MouseEvent | React.TouchEvent) => {
         e.preventDefault();
@@ -595,8 +613,8 @@ export const SplitView = React.memo(({ original, translated, onTranslatedChange,
     const fontClass = fontType === 'serif' ? 'font-arabicSerif' : 'font-arabic';
 
     return (
-        <div ref={containerRef} className="flex h-full w-full gap-4 relative isolate">
-            <div style={{ width: `calc(${ratio}% - 8px)` }} className="h-full min-w-0 transition-[width] duration-75 ease-linear">
+        <div ref={containerRef} className="flex h-full w-full gap-2 relative isolate">
+            <div style={{ width: `calc(${ratio}% - 4px)` }} className="h-full min-w-0 transition-[width] duration-75 ease-linear">
                 <BookPage 
                     title="Original Source" 
                     content={original} 
@@ -611,27 +629,31 @@ export const SplitView = React.memo(({ original, translated, onTranslatedChange,
                 onMouseDown={handleMouseDown}
                 onTouchStart={handleMouseDown}
             >
-                <div className={`w-1 h-12 rounded-full transition-all duration-300 ${isDragging ? 'bg-sky-500 h-16 w-1.5' : 'bg-slate-200 dark:bg-slate-700 group-hover:bg-sky-400'}`} />
+                <div className={`w-1.5 h-16 rounded-full flex items-center justify-center transition-all duration-300 ${isDragging ? 'bg-sky-500 scale-y-110' : 'bg-slate-200 dark:bg-slate-700 group-hover:bg-sky-400'}`}>
+                    <GripVertical className={`w-3 h-4 ${isDragging ? 'text-white' : 'text-slate-400 dark:text-slate-500 group-hover:text-white'} transition-colors`} />
+                </div>
             </div>
 
-            <div style={{ width: `calc(${100 - ratio}% - 8px)` }} className="h-full min-w-0 transition-[width] duration-75 ease-linear">
-                <div className="flex flex-col h-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden relative group transition-all duration-300">
-                    <div className="h-10 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between px-4 bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur-sm shrink-0">
-                        <span className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                            Arabic Translation
-                        </span>
-                        <div className="flex items-center gap-2">
-                            <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono opacity-0 group-hover:opacity-100 transition-opacity">
-                                {fontSize}px • {fontType}
+            <div style={{ width: `calc(${100 - ratio}% - 4px)` }} className="h-full min-w-0 transition-[width] duration-75 ease-linear">
+                <div className="flex flex-col h-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden relative transition-all duration-300">
+                    <div className="h-12 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between px-4 bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur-sm shrink-0">
+                        <div className="flex items-center gap-3">
+                            <div className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
+                            <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                                Arabic Translation
                             </span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <button onClick={handleCopy} disabled={!translated} className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-md hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors disabled:opacity-50" title="Copy HTML">
+                                {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                            </button>
                         </div>
                     </div>
                     
-                    <div className="flex-1 relative">
+                    <div className="flex-1 relative bg-slate-50/30 dark:bg-slate-900/30 overflow-y-auto custom-scrollbar">
                         {(!translated && !isTranslating) && (
                             <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-300 dark:text-slate-600 select-none pointer-events-none">
-                                <div className="w-16 h-16 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-full flex items-center justify-center mb-4 bg-slate-50 dark:bg-slate-800">
+                                <div className="w-16 h-16 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-full flex items-center justify-center mb-4 bg-slate-50 dark:bg-slate-800/50">
                                     <Info className="w-6 h-6 text-slate-300 dark:text-slate-600" />
                                 </div>
                                 <p className="text-sm font-medium">No content loaded</p>
@@ -640,19 +662,21 @@ export const SplitView = React.memo(({ original, translated, onTranslatedChange,
                         
                         {isTranslating && (
                             <div className="absolute inset-0 flex items-center justify-center bg-white/80 dark:bg-slate-800/80 backdrop-blur-[2px] z-10 animate-in fade-in duration-300">
-                                <div className="flex flex-col items-center gap-3 bg-white dark:bg-slate-800 p-6 rounded-lg shadow-xl border border-slate-100 dark:border-slate-700">
-                                    <Spinner className="w-8 h-8 text-sky-500" />
-                                    <p className="text-xs font-bold text-sky-500 animate-pulse tracking-wide uppercase">Translating Segment...</p>
+                                <div className="flex flex-col items-center gap-3 bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-xl border border-slate-100 dark:border-slate-700">
+                                    <Loader2 className="w-8 h-8 text-sky-500 animate-spin" />
+                                    <p className="text-xs font-bold text-sky-500 tracking-wide uppercase">Translating Segment...</p>
                                 </div>
                             </div>
                         )}
 
-                        <textarea
-                            className={`w-full h-full resize-none bg-transparent border-none focus:ring-0 p-8 text-right outline-none text-slate-900 dark:text-slate-50 custom-scrollbar ${fontClass}`}
-                            style={{ fontSize: `${fontSize}px`, lineHeight: 2.0 }}
-                            value={translated || ''}
-                            onChange={(e) => onTranslatedChange(e.target.value)}
-                            placeholder="Arabic translation will appear here..."
+                        <div
+                            key={original}
+                            className={`w-full min-h-full resize-none bg-transparent border-none focus:ring-0 p-8 text-right outline-none text-slate-900 dark:text-slate-50 ${fontClass} prose prose-slate dark:prose-invert max-w-none leading-loose focus:bg-white dark:focus:bg-slate-800 transition-colors duration-300`}
+                            style={{ fontSize: `${fontSize}px` }}
+                            contentEditable={!isTranslating}
+                            suppressContentEditableWarning
+                            onBlur={(e) => onTranslatedChange(e.currentTarget.innerHTML)}
+                            dangerouslySetInnerHTML={{ __html: translated || '' }}
                             dir="rtl"
                         />
                     </div>
