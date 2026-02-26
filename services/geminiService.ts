@@ -39,30 +39,7 @@ export const geminiService = {
     ];
 
     // Fallback strategy: Try Pr o model first, then Flash if Pro is too strict/busy
-    const modelsToTry = ['gemini-3-pro-preview',  'gemini-2.5-pro'];
-    // If some parts include offensive or sensitive content, the API will always return an empty response. Reduce temperature to 0.3 to 1 and Replace the models with the following: 'gemini-2.0-flash', 'gemini-2.0-flash-lite'
-    // Replace the system prompt with this:
-    /*
-    
-    `You are a specialist Arabic literary translator and editor working for a prestigious publishing house.
-Your task is to translate the provided HTML content into professional, native-level Arabic, strictly preserving the HTML structure.
-
-IMPORTANT CONTEXT:
-- The source text is from a fictional literary work (novel).
-- It includes dialogue, dramatic situations, and may contain mature themes, violence, or sensitive topics typical of fiction.
-- Your goal is to translate FAITHFULLY and ACCURATELY. 
-- Do NOT censor, sanitize, or summarize. Do NOT refuse to translate based on the fictional characters' actions or dialogue.
-- Preserve the original tone, style, and meaning of the narrative.
-
-Rules:
-1. Translate the inner text of tags into literary Arabic. Match the tone of the source.
-2. Preserve all tags exactly. Do not add new tags. Do not delete, change or reorder any HTML tags.
-3. Do not change the nesting of tags. Do not translate class names, IDs or attributes.
-4. Output only the HTML. Do not wrap it in Markdown code blocks.
-5. If the text contains technical terms, keep them in English if appropriate or provide a standard Arabic equivalent.
-6. Preserve all numeric values.
-
-    */
+    const modelsToTry = ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-flash-latest'];
     let lastError: Error | null = null;
 
     for (const model of modelsToTry) {
@@ -74,23 +51,16 @@ Rules:
 
             const startTime = Date.now();
 
-            // Create a timeout promise
-            const timeoutPromise = new Promise<never>((_, reject) => {
-                setTimeout(() => reject(new Error("Request timed out")), 600000); // 10m timeout
-            });
-
-            const requestPromise = ai.models.generateContent({
+            const response = await ai.models.generateContent({
                 model: model,
                 contents: { parts: [{ text: html }] },
                 config: {
                     systemInstruction: SYSTEM_INSTRUCTION,
-                    temperature: 0, // Slightly higher for literary creativity
+                    temperature: 0.3, // Slightly higher for literary creativity
                     safetySettings: safetySettings,
                 }
             });
 
-            // Race against timeout
-            const response = await Promise.race([requestPromise, timeoutPromise]);
             const duration = Date.now() - startTime;
             const finishReason = response.candidates?.[0]?.finishReason;
             const translatedText = response.text?.trim();

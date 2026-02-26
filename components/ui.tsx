@@ -1,7 +1,62 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { Loader2, Terminal, AlertTriangle, X, Maximize2, Minimize2, Info, GripVertical, Bot, Activity, ChevronRight, ChevronDown, FileJson } from 'lucide-react';
+import React, { useEffect, useRef, useState, useMemo, Component, ErrorInfo, ReactNode } from 'react';
+import { Loader2, Terminal, AlertTriangle, X, Maximize2, Minimize2, Info, GripVertical, Bot, Activity, ChevronRight, ChevronDown, FileJson, ShieldAlert } from 'lucide-react';
 import DOMPurify from 'dompurify';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Segment, SystemLogEntry, AIDebugLogEntry } from '../types';
+import { cn } from '../lib/utils';
+
+// --- Error Boundary ---
+interface ErrorBoundaryProps {
+  children: ReactNode;
+  fallback?: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("Uncaught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+      return (
+        <div className="flex flex-col items-center justify-center h-screen bg-slate-50 text-slate-900 p-6 text-center">
+          <ShieldAlert className="w-16 h-16 text-rose-500 mb-4" />
+          <h1 className="text-2xl font-bold mb-2">Something went wrong</h1>
+          <p className="text-slate-600 mb-6 max-w-md">
+            An unexpected error occurred in the application. Please try refreshing the page or clearing your browser data if the issue persists.
+          </p>
+          <div className="bg-white p-4 rounded-lg border border-slate-200 text-left w-full max-w-2xl overflow-auto max-h-64 shadow-sm">
+            <pre className="text-xs text-rose-600 font-mono whitespace-pre-wrap">
+              {this.state.error?.toString()}
+            </pre>
+          </div>
+          <Button className="mt-6" onClick={() => window.location.reload()}>
+            Reload Application
+          </Button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 // --- Primitives ---
 
@@ -26,7 +81,7 @@ export const Button = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttrib
     };
 
     return (
-      <button ref={ref} className={`${base} ${variants[variant]} ${sizes[size]} ${className}`} {...props} />
+      <button ref={ref} className={cn(base, variants[variant], sizes[size], className)} {...props} />
     );
   }
 );
@@ -35,7 +90,7 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
   ({ className, ...props }, ref) => {
     return (
       <input
-        className={`flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:border-transparent disabled:cursor-not-allowed disabled:opacity-50 transition-all shadow-sm ${className}`}
+        className={cn("flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:border-transparent disabled:cursor-not-allowed disabled:opacity-50 transition-all shadow-sm", className)}
         ref={ref}
         {...props}
       />
@@ -44,33 +99,47 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
 );
 
 export const Label = ({ className, children, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) => (
-    <label className={`text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5 block ${className}`} {...props}>
+    <label className={cn("text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5 block", className)} {...props}>
         {children}
     </label>
 );
 
 export const Card = ({ children, className, hover = false }: { children?: React.ReactNode; className?: string, hover?: boolean }) => (
-  <div className={`rounded-xl border border-slate-200 bg-white text-slate-950 shadow-sm ${hover ? 'hover:shadow-md hover:border-brand-200 transition-all duration-300' : ''} ${className}`}>
+  <div className={cn("rounded-xl border border-slate-200 bg-white text-slate-950 shadow-sm", hover && "hover:shadow-md hover:border-brand-200 transition-all duration-300", className)}>
     {children}
   </div>
 );
 
 export const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean; onClose: () => void; title: string; children?: React.ReactNode }) => {
-    if (!isOpen) return null;
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200 p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 border border-slate-100">
-                <div className="flex justify-between items-center px-6 py-5 border-b border-slate-100 bg-slate-50/50">
-                    <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
-                    <button onClick={onClose} className="text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 p-1 rounded-full transition-colors">
-                        <X className="w-5 h-5" />
-                    </button>
-                </div>
-                <div className="p-6">
-                    {children}
-                </div>
-            </div>
-        </div>
+        <AnimatePresence>
+            {isOpen && (
+                <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4"
+                >
+                    <motion.div 
+                        initial={{ scale: 0.95, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0.95, opacity: 0 }}
+                        transition={{ type: "spring", duration: 0.3 }}
+                        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-100"
+                    >
+                        <div className="flex justify-between items-center px-6 py-5 border-b border-slate-100 bg-slate-50/50">
+                            <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
+                            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 p-1 rounded-full transition-colors" aria-label="Close modal">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+                        <div className="p-6">
+                            {children}
+                        </div>
+                    </motion.div>
+                </motion.div>
+            )}
+        </AnimatePresence>
     );
 };
 
@@ -84,7 +153,7 @@ export const Badge = ({ status, className }: { status: string, className?: strin
     SKIPPED: 'bg-slate-50 text-slate-500 border-slate-200 dashed-border',
   };
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border ${styles[status] || styles.PENDING} ${className}`}>
+    <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border", styles[status] || styles.PENDING, className)}>
       {status === 'TRANSLATING' && <Spinner className="w-3 h-3 mr-1.5 text-brand-600" />}
       {status}
     </span>
@@ -98,7 +167,7 @@ export const Spinner = ({ className }: { className?: string }) => <Loader2 class
 export const ProgressBar = ({ current, total, className, minimal = false }: { current: number; total: number; className?: string, minimal?: boolean }) => {
   const percent = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
   return (
-    <div className={`w-full ${className}`}>
+    <div className={cn("w-full", className)}>
         {!minimal && (
             <div className="flex justify-between text-xs mb-2 font-medium text-slate-500">
                 <span>Progress</span>
@@ -106,18 +175,20 @@ export const ProgressBar = ({ current, total, className, minimal = false }: { cu
             </div>
         )}
       <div className="bg-slate-100 rounded-full h-2 overflow-hidden">
-        <div
-          className="bg-brand-500 h-full rounded-full transition-all duration-500 ease-out relative"
-          style={{ width: `${percent}%` }}
+        <motion.div
+          className="bg-brand-500 h-full rounded-full relative"
+          initial={{ width: 0 }}
+          animate={{ width: `${percent}%` }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
         >
             <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
-        </div>
+        </motion.div>
       </div>
     </div>
   );
 };
 
-export const SegmentMap = ({ segments, onClickSegment }: { segments: Segment[], onClickSegment?: (s: Segment) => void }) => {
+export const SegmentMap = React.memo(({ segments, onClickSegment }: { segments: Segment[], onClickSegment?: (s: Segment) => void }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -210,7 +281,7 @@ export const SegmentMap = ({ segments, onClickSegment }: { segments: Segment[], 
         )}
     </div>
   );
-};
+});
 
 // Replaces SystemLog
 
@@ -262,7 +333,7 @@ const AILogRow: React.FC<{ log: AIDebugLogEntry }> = ({ log }) => {
     );
 }
 
-export const Console = ({ systemLogs, aiLogs, isOpen, toggle }: { systemLogs: SystemLogEntry[], aiLogs: AIDebugLogEntry[], isOpen: boolean, toggle: () => void }) => {
+export const Console = React.memo(({ systemLogs, aiLogs, isOpen, toggle }: { systemLogs: SystemLogEntry[], aiLogs: AIDebugLogEntry[], isOpen: boolean, toggle: () => void }) => {
   const [tab, setTab] = useState<'SYSTEM' | 'AI'>('SYSTEM');
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -368,9 +439,9 @@ export const Console = ({ systemLogs, aiLogs, isOpen, toggle }: { systemLogs: Sy
         )}
     </div>
   );
-};
+});
 
-export const BookPage = ({ title, content, lang = 'en', isLoading = false, isEmpty = false, fontSize = 18, fontType = 'serif' }: { title: string, content: string | null, lang?: 'en' | 'ar', isLoading?: boolean, isEmpty?: boolean, fontSize?: number, fontType?: 'serif' | 'sans' }) => {
+export const BookPage = React.memo(({ title, content, lang = 'en', isLoading = false, isEmpty = false, fontSize = 18, fontType = 'serif' }: { title: string, content: string | null, lang?: 'en' | 'ar', isLoading?: boolean, isEmpty?: boolean, fontSize?: number, fontType?: 'serif' | 'sans' }) => {
     
     const fontClass = lang === 'ar' 
         ? (fontType === 'serif' ? 'font-arabicSerif' : 'font-arabic')
@@ -419,9 +490,9 @@ export const BookPage = ({ title, content, lang = 'en', isLoading = false, isEmp
             </div>
         </div>
     )
-}
+});
 
-export const SplitView = ({ original, translated, isTranslating, fontSize, fontType }: { original: string, translated: string | null, isTranslating: boolean, fontSize: number, fontType: 'serif' | 'sans' }) => {
+export const SplitView = React.memo(({ original, translated, isTranslating, fontSize, fontType }: { original: string, translated: string | null, isTranslating: boolean, fontSize: number, fontType: 'serif' | 'sans' }) => {
     const [ratio, setRatio] = useState(50);
     const containerRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
@@ -490,4 +561,4 @@ export const SplitView = ({ original, translated, isTranslating, fontSize, fontT
             </div>
         </div>
     )
-}
+});

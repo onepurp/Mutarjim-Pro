@@ -6,6 +6,7 @@ import { dbService } from './services/db';
 import { epubService } from './services/epubService';
 import { geminiService } from './services/geminiService';
 import { backupService } from './services/backupService';
+import { useTranslationProcessor } from './hooks/useTranslationProcessor';
 import { Button, Card, ProgressBar, Badge, Spinner, SegmentMap, Console, Modal, Input, Label, SplitView } from './components/ui';
 
 const App = () => {
@@ -41,8 +42,6 @@ const App = () => {
       forceAlignment: false
   });
 
-  // Refs for processing loop
-  const processingRef = useRef<boolean>(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // --- LOGGING ---
@@ -260,113 +259,16 @@ const App = () => {
   };
 
   // --- TRANSLATION LOOP ---
-
-  const processQueue = useCallback(async () => {
-      if (processingRef.current) return;
-      processingRef.current = true;
-      addLog("Processor started.", 'INFO');
-
-      const CONCURRENCY = 3;
-      let activeWorkers = 0;
-      let isQuotaHit = false;
-
-      const worker = async () => {
-          activeWorkers++;
-          while (processingRef.current && !isQuotaHit) {
-              const segment = await dbService.getAndMarkPendingSegment();
-              
-              if (!segment) {
-                  break; // No more segments
-              }
-
-              // Update ref immediately for minimap sync
-              const segIndex = segmentsRef.current.findIndex(s => s.id === segment.id);
-              if (segIndex !== -1) {
-                  segmentsRef.current[segIndex] = { ...segment, status: SegmentStatus.TRANSLATING };
-                  setActiveSegmentIndex(segIndex); // Focus on one of the active ones
-              }
-
-              try {
-                  const translatedHtml = await geminiService.translateHtml(segment.originalHtml, (msg, type, data) => addAiLog(msg, type, data));
-                  
-                  segment.translatedHtml = translatedHtml;
-                  segment.status = SegmentStatus.TRANSLATED;
-                  segment.error = undefined;
-                  await dbService.updateSegment(segment);
-
-                  if (segIndex !== -1) {
-                      segmentsRef.current[segIndex] = segment;
-                  }
-                  
-                  setProject(prev => prev ? ({ ...prev, translatedSegments: prev.translatedSegments + 1 }) : null);
-
-              } catch (e: unknown) {
-                  const err = e as any;
-                  const isQuota = err.message?.includes('429') || err.status === 429;
-                  
-                  if (isQuota) {
-                      isQuotaHit = true;
-                      setAppState(AppState.QUOTA_PAUSED);
-                      addLog("API Quota hit. Pausing.", 'WARNING');
-                      
-                      segment.status = SegmentStatus.PENDING;
-                      await dbService.updateSegment(segment);
-                      
-                      if (segIndex !== -1) {
-                          segmentsRef.current[segIndex] = { ...segmentsRef.current[segIndex], status: SegmentStatus.PENDING };
-                      }
-                      break;
-                  }
-
-                  segment.status = SegmentStatus.FAILED;
-                  segment.error = err.message;
-                  segment.retryCount = (segment.retryCount || 0) + 1;
-                  
-                  if (segment.retryCount >= 3) {
-                      segment.status = SegmentStatus.SKIPPED;
-                      addLog(`Segment ${segment.id} skipped (max retries).`, 'WARNING');
-                  }
-
-                  await dbService.updateSegment(segment);
-                  if (segIndex !== -1) {
-                      segmentsRef.current[segIndex] = segment;
-                  }
-              }
-          }
-          activeWorkers--;
-          
-          if (activeWorkers === 0) {
-              processingRef.current = false;
-              if (!isQuotaHit) {
-                  const stats = await dbService.getStats();
-                  if (stats.translated === stats.total && stats.total > 0) {
-                      setAppState(AppState.COMPLETED);
-                      addLog("Project completed!", 'SUCCESS');
-                  } else {
-                      setAppState(AppState.IDLE);
-                  }
-              }
-          }
-      };
-
-      // Start workers
-      for (let i = 0; i < CONCURRENCY; i++) {
-          worker();
-      }
-  }, [addLog, addAiLog]);
-
-  useEffect(() => {
-      if (appState === AppState.TRANSLATING) {
-          processQueue();
-          const interval = setInterval(() => {
-              setSegments([...segmentsRef.current]);
-          }, 1000);
-          return () => clearInterval(interval);
-      } else {
-          processingRef.current = false;
-          setSegments([...segmentsRef.current]);
-      }
-  }, [appState, processQueue]);
+  const { processingRef } = useTranslationProcessor(
+      appState,
+      setAppState,
+      segmentsRef,
+      setSegments,
+      setProject,
+      setActiveSegmentIndex,
+      addLog,
+      addAiLog
+  );
 
   const togglePlayPause = () => {
       setAppState(curr => curr === AppState.TRANSLATING ? AppState.PAUSED : AppState.TRANSLATING);
