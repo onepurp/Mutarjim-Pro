@@ -192,111 +192,31 @@ export const ProgressBar = ({ current, total, className, minimal = false }: { cu
 };
 
 export const SegmentMap = React.memo(({ segments, onClickSegment }: { segments: Segment[], onClickSegment?: (s: Segment) => void }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container || segments.length === 0) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const DOT_SIZE = 6;
-    const GAP = 2;
-    const PADDING = 4;
-
-    const draw = (width: number) => {
-      const cols = Math.max(1, Math.floor((width - PADDING * 2) / (DOT_SIZE + GAP)));
-      const rows = Math.ceil(segments.length / cols);
-      
-      canvas.width = width;
-      canvas.height = Math.max(100, rows * (DOT_SIZE + GAP) + PADDING * 2);
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
-      const isDark = document.documentElement.classList.contains('dark');
-
-      segments.forEach((s, i) => {
-        const col = i % cols;
-        const row = Math.floor(i / cols);
-        const x = PADDING + col * (DOT_SIZE + GAP);
-        const y = PADDING + row * (DOT_SIZE + GAP);
-
-        if (s.status === 'TRANSLATING') ctx.fillStyle = isDark ? '#f59e0b' : '#f59e0b'; // amber-500
-        else if (s.status === 'TRANSLATED') ctx.fillStyle = isDark ? '#10b981' : '#10b981'; // emerald-500
-        else if (s.status === 'FAILED') ctx.fillStyle = isDark ? '#ef4444' : '#ef4444'; // red-500
-        else if (s.status === 'SKIPPED') ctx.fillStyle = isDark ? '#fbbf24' : '#fbbf24'; // amber-400
-        else ctx.fillStyle = isDark ? '#475569' : '#cbd5e1'; // slate-600 / slate-300
-
-        ctx.fillRect(x, y, DOT_SIZE, DOT_SIZE);
-      });
-    };
-
-    // Initial draw
-    if (container.clientWidth > 0) {
-      draw(container.clientWidth);
-    }
-
-    const resizeObserver = new ResizeObserver(entries => {
-      window.requestAnimationFrame(() => {
-        if (!Array.isArray(entries) || !entries.length) return;
-        draw(entries[0].contentRect.width);
-      });
-    });
-
-    resizeObserver.observe(container);
-    
-    // Also redraw on theme change
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        if (mutation.attributeName === 'class') {
-          draw(container.clientWidth);
-        }
-      });
-    });
-    observer.observe(document.documentElement, { attributes: true });
-
-    return () => {
-      resizeObserver.disconnect();
-      observer.disconnect();
-    };
-  }, [segments]);
-
-  const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!onClickSegment || segments.length === 0) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    const DOT_SIZE = 6;
-    const GAP = 2;
-    const PADDING = 4;
-    const cols = Math.max(1, Math.floor((canvas.width - PADDING * 2) / (DOT_SIZE + GAP)));
-    
-    const col = Math.floor((x - PADDING) / (DOT_SIZE + GAP));
-    const row = Math.floor((y - PADDING) / (DOT_SIZE + GAP));
-    
-    if (col >= 0 && col < cols && row >= 0) {
-      const index = row * cols + col;
-      if (index >= 0 && index < segments.length) {
-        onClickSegment(segments[index]);
-      }
-    }
-  };
-
   return (
-    <div ref={containerRef} className="w-full h-full overflow-y-auto custom-scrollbar p-1">
+    <div className="w-full h-full overflow-y-auto custom-scrollbar p-1">
         {segments.length === 0 ? (
             <div className="flex h-full items-center justify-center text-slate-400 dark:text-slate-500 text-xs italic">
                 No data
             </div>
         ) : (
-            <canvas ref={canvasRef} onClick={handleClick} className="cursor-pointer" />
+            <div className="flex flex-wrap gap-[2px] content-start">
+            {segments.map((s, i) => {
+                let bg = 'bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600';
+                if (s.status === 'TRANSLATING') bg = 'bg-amber-400 dark:bg-amber-500 animate-pulse';
+                else if (s.status === 'TRANSLATED') bg = 'bg-emerald-400 dark:bg-emerald-500 hover:bg-emerald-500 dark:hover:bg-emerald-400';
+                else if (s.status === 'FAILED') bg = 'bg-rose-400 dark:bg-rose-500 hover:bg-rose-500 dark:hover:bg-rose-400';
+                else if (s.status === 'SKIPPED') bg = 'bg-amber-300 dark:bg-amber-400 hover:bg-amber-400 dark:hover:bg-amber-300';
+                
+                return (
+                    <div 
+                        key={s.id} 
+                        className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-[1px] cursor-pointer transition-colors duration-150 ${bg}`} 
+                        title={`Segment ${i + 1} (${s.status})`}
+                        onClick={() => onClickSegment && onClickSegment(s)}
+                    />
+                );
+            })}
+            </div>
         )}
     </div>
   );

@@ -39,7 +39,7 @@ export const geminiService = {
     ];
 
     // Fallback strategy: Try Pr o model first, then Flash if Pro is too strict/busy
-    const modelsToTry = ['gemini-3.1-pro-preview', 'gemini-3-pro-preview', 'gemini-2.5-pro', 'gemini-3-flash-preview'];
+    const modelsToTry = ['gemini-3-pro-preview', 'gemini-2.5-pro', 'gemini-3-flash-preview'];
     let lastError: Error | null = null;
 
     for (const model of modelsToTry) {
