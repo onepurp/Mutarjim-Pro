@@ -15,6 +15,7 @@ const App = () => {
   const [loadingMsg, setLoadingMsg] = useState<string | null>(null);
   const [project, setProject] = useState<ProjectData | null>(null);
   const [segments, setSegments] = useState<Segment[]>([]);
+  const segmentsRef = useRef<Segment[]>([]);
   const [systemLogs, setSystemLogs] = useState<SystemLogEntry[]>([]);
   const [aiLogs, setAiLogs] = useState<AIDebugLogEntry[]>([]);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
@@ -85,6 +86,7 @@ const App = () => {
               }
 
               const segs = await dbService.getAllSegments();
+              segmentsRef.current = segs;
               setSegments(segs);
               
               // Find first pending or translated segment to show
@@ -229,6 +231,7 @@ const App = () => {
       if(confirm("Are you sure? This will delete all translation progress.")) {
           await dbService.clearDatabase();
           setProject(null);
+          segmentsRef.current = [];
           setSegments([]);
           setView('landing');
           addLog("Project deleted.", 'WARNING');
@@ -263,113 +266,105 @@ const App = () => {
       processingRef.current = true;
       addLog("Processor started.", 'INFO');
 
-      while (processingRef.current) {
-          const segment = await dbService.getPendingSegment();
-          
-          if (!segment) {
-              const stats = await dbService.getStats();
-              if (stats.translated === stats.total && stats.total > 0) {
-                  setAppState(AppState.COMPLETED);
-                  addLog("Project completed!", 'SUCCESS');
-              } else {
-                  setAppState(AppState.IDLE);
+      const CONCURRENCY = 3;
+      let activeWorkers = 0;
+      let isQuotaHit = false;
+
+      const worker = async () => {
+          activeWorkers++;
+          while (processingRef.current && !isQuotaHit) {
+              const segment = await dbService.getAndMarkPendingSegment();
+              
+              if (!segment) {
+                  break; // No more segments
               }
-              processingRef.current = false;
-              break;
-          }
 
-          // UI Update: Focus on the working segment
-          const idx = parseInt(segment.id.split('::').pop() || '0'); // Assuming ID scheme
-          // Better way to find index in current array
-          const segIndex = segments.findIndex(s => s.id === segment.id);
-          if (segIndex !== -1) setActiveSegmentIndex(segIndex);
+              // Update ref immediately for minimap sync
+              const segIndex = segmentsRef.current.findIndex(s => s.id === segment.id);
+              if (segIndex !== -1) {
+                  segmentsRef.current[segIndex] = { ...segment, status: SegmentStatus.TRANSLATING };
+                  setActiveSegmentIndex(segIndex); // Focus on one of the active ones
+              }
 
-          try {
-              // Mark as translating
-              setSegments(prev => {
-                  const copy = [...prev];
-                  const i = copy.findIndex(s => s.id === segment.id);
-                  if (i !== -1) copy[i] = { ...copy[i], status: SegmentStatus.TRANSLATING };
-                  return copy;
-              });
-
-              // Translate
-              const translatedHtml = await geminiService.translateHtml(segment.originalHtml, (msg, type, data) => addAiLog(msg, type, data));
-              
-              // Update DB
-              segment.translatedHtml = translatedHtml;
-              segment.status = SegmentStatus.TRANSLATED;
-              segment.error = undefined;
-              await dbService.updateSegment(segment);
-
-              // Update State
-              setSegments(prev => {
-                  const copy = [...prev];
-                  const i = copy.findIndex(s => s.id === segment.id);
-                  if (i !== -1) copy[i] = segment;
-                  return copy;
-              });
-              setProject(prev => prev ? ({ ...prev, translatedSegments: prev.translatedSegments + 1 }) : null);
-
-              // Small delay for UX
-              await new Promise(r => setTimeout(r, 100));
-
-          } catch (e: any) {
-              console.error(e);
-              const isQuota = e.message?.includes('429') || e.status === 429;
-              
-              if (isQuota) {
-                  setAppState(AppState.QUOTA_PAUSED);
-                  addLog("API Quota hit. Pausing.", 'WARNING');
+              try {
+                  const translatedHtml = await geminiService.translateHtml(segment.originalHtml, (msg, type, data) => addAiLog(msg, type, data));
                   
-                  // Fix: Ensure we revert the database status as well, not just local state
-                  segment.status = SegmentStatus.PENDING;
+                  segment.translatedHtml = translatedHtml;
+                  segment.status = SegmentStatus.TRANSLATED;
+                  segment.error = undefined;
                   await dbService.updateSegment(segment);
+
+                  if (segIndex !== -1) {
+                      segmentsRef.current[segIndex] = segment;
+                  }
                   
-                  // Revert status to PENDING so UI doesn't show it stuck in translating
-                  setSegments(prev => {
-                      const copy = [...prev];
-                      const i = copy.findIndex(s => s.id === segment.id);
-                      if (i !== -1) copy[i] = { ...copy[i], status: SegmentStatus.PENDING };
-                      return copy;
-                  });
+                  setProject(prev => prev ? ({ ...prev, translatedSegments: prev.translatedSegments + 1 }) : null);
+
+              } catch (e: unknown) {
+                  const err = e as any;
+                  const isQuota = err.message?.includes('429') || err.status === 429;
                   
-                  processingRef.current = false;
-                  break;
+                  if (isQuota) {
+                      isQuotaHit = true;
+                      setAppState(AppState.QUOTA_PAUSED);
+                      addLog("API Quota hit. Pausing.", 'WARNING');
+                      
+                      segment.status = SegmentStatus.PENDING;
+                      await dbService.updateSegment(segment);
+                      
+                      if (segIndex !== -1) {
+                          segmentsRef.current[segIndex] = { ...segmentsRef.current[segIndex], status: SegmentStatus.PENDING };
+                      }
+                      break;
+                  }
+
+                  segment.status = SegmentStatus.FAILED;
+                  segment.error = err.message;
+                  segment.retryCount = (segment.retryCount || 0) + 1;
+                  
+                  if (segment.retryCount >= 3) {
+                      segment.status = SegmentStatus.SKIPPED;
+                      addLog(`Segment ${segment.id} skipped (max retries).`, 'WARNING');
+                  }
+
+                  await dbService.updateSegment(segment);
+                  if (segIndex !== -1) {
+                      segmentsRef.current[segIndex] = segment;
+                  }
               }
-
-              segment.status = SegmentStatus.FAILED;
-              segment.error = e.message;
-              segment.retryCount = (segment.retryCount || 0) + 1;
-              
-              if (segment.retryCount >= 3) {
-                  segment.status = SegmentStatus.SKIPPED;
-                  addLog(`Segment ${segment.id} skipped (max retries).`, 'WARNING');
-              }
-
-              await dbService.updateSegment(segment);
-               setSegments(prev => {
-                  const copy = [...prev];
-                  const i = copy.findIndex(s => s.id === segment.id);
-                  if (i !== -1) copy[i] = segment;
-                  return copy;
-              });
-
-              await new Promise(r => setTimeout(r, 1000));
           }
-
-          if (appState === AppState.PAUSED) {
+          activeWorkers--;
+          
+          if (activeWorkers === 0) {
               processingRef.current = false;
-              break;
+              if (!isQuotaHit) {
+                  const stats = await dbService.getStats();
+                  if (stats.translated === stats.total && stats.total > 0) {
+                      setAppState(AppState.COMPLETED);
+                      addLog("Project completed!", 'SUCCESS');
+                  } else {
+                      setAppState(AppState.IDLE);
+                  }
+              }
           }
+      };
+
+      // Start workers
+      for (let i = 0; i < CONCURRENCY; i++) {
+          worker();
       }
-  }, [appState, segments, addLog, addAiLog]);
+  }, [addLog, addAiLog]);
 
   useEffect(() => {
       if (appState === AppState.TRANSLATING) {
           processQueue();
+          const interval = setInterval(() => {
+              setSegments([...segmentsRef.current]);
+          }, 1000);
+          return () => clearInterval(interval);
       } else {
           processingRef.current = false;
+          setSegments([...segmentsRef.current]);
       }
   }, [appState, processQueue]);
 
@@ -380,6 +375,7 @@ const App = () => {
   const retrySkipped = async () => {
       await dbService.retrySkippedSegments();
       const updated = await dbService.getAllSegments();
+      segmentsRef.current = updated;
       setSegments(updated);
       addLog("Retrying skipped segments...", 'INFO');
       setAppState(AppState.TRANSLATING);

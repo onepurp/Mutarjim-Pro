@@ -53,6 +53,28 @@ export const dbService = {
     await tx.done;
   },
 
+  async getAndMarkPendingSegment(): Promise<Segment | undefined> {
+    const db = await getDB();
+    const tx = db.transaction('segments', 'readwrite');
+    const index = tx.store.index('by-status');
+    
+    // 1. Prioritize PENDING segments
+    let segment = await index.get(SegmentStatus.PENDING);
+    
+    // 2. If no PENDING, look for FAILED segments to retry
+    if (!segment) {
+      segment = await index.get(SegmentStatus.FAILED);
+    }
+    
+    if (segment) {
+      segment.status = SegmentStatus.TRANSLATING;
+      await tx.store.put(segment);
+    }
+    
+    await tx.done;
+    return segment;
+  },
+
   async getPendingSegment(): Promise<Segment | undefined> {
     const db = await getDB();
     

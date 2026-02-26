@@ -2,8 +2,8 @@
 import JSZip from 'jszip';
 import { AnalysisResult, Segment, SegmentStatus, ProjectData, ExportSettings } from '../types';
 
-const BLOCK_TAGS = ['p', 'div', 'blockquote', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'section', 'article', 'aside', 'main', 'header', 'footer'];
-const BREAKER_TAGS = ['img', 'hr', 'table', 'pre', 'svg', 'figure'];
+const BLOCK_TAGS = ['p', 'div', 'table', 'blockquote', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'section', 'article', 'aside', 'main', 'header', 'footer'];
+const BREAKER_TAGS = ['img', 'hr', 'pre', 'svg', 'figure'];
 const HEADER_TAGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
 const BATCH_CHAR_LIMIT = 6000;
 const SCHEMA_VERSION = 2; // V2 supports text nodes

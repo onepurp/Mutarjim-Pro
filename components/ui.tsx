@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Loader2, Terminal, AlertTriangle, X, Maximize2, Minimize2, Info, GripVertical, Bot, Activity, ChevronRight, ChevronDown, FileJson } from 'lucide-react';
+import DOMPurify from 'dompurify';
 import { Segment, SystemLogEntry, AIDebugLogEntry } from '../types';
 
 // --- Primitives ---
@@ -117,31 +118,95 @@ export const ProgressBar = ({ current, total, className, minimal = false }: { cu
 };
 
 export const SegmentMap = ({ segments, onClickSegment }: { segments: Segment[], onClickSegment?: (s: Segment) => void }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container || segments.length === 0) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const DOT_SIZE = 6;
+    const GAP = 2;
+    const PADDING = 4;
+
+    const draw = (width: number) => {
+      const cols = Math.max(1, Math.floor((width - PADDING * 2) / (DOT_SIZE + GAP)));
+      const rows = Math.ceil(segments.length / cols);
+      
+      canvas.width = width;
+      canvas.height = Math.max(100, rows * (DOT_SIZE + GAP) + PADDING * 2);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      segments.forEach((s, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const x = PADDING + col * (DOT_SIZE + GAP);
+        const y = PADDING + row * (DOT_SIZE + GAP);
+
+        if (s.status === 'TRANSLATING') ctx.fillStyle = '#38bdf8'; // brand-400
+        else if (s.status === 'TRANSLATED') ctx.fillStyle = '#34d399'; // emerald-400
+        else if (s.status === 'FAILED') ctx.fillStyle = '#fb7185'; // rose-400
+        else if (s.status === 'SKIPPED') ctx.fillStyle = '#fde047'; // amber-300
+        else ctx.fillStyle = '#e2e8f0'; // slate-200
+
+        ctx.fillRect(x, y, DOT_SIZE, DOT_SIZE);
+      });
+    };
+
+    // Initial draw
+    if (container.clientWidth > 0) {
+      draw(container.clientWidth);
+    }
+
+    const resizeObserver = new ResizeObserver(entries => {
+      window.requestAnimationFrame(() => {
+        if (!Array.isArray(entries) || !entries.length) return;
+        draw(entries[0].contentRect.width);
+      });
+    });
+
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }, [segments]);
+
+  const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!onClickSegment || segments.length === 0) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    const DOT_SIZE = 6;
+    const GAP = 2;
+    const PADDING = 4;
+    const cols = Math.max(1, Math.floor((canvas.width - PADDING * 2) / (DOT_SIZE + GAP)));
+    
+    const col = Math.floor((x - PADDING) / (DOT_SIZE + GAP));
+    const row = Math.floor((y - PADDING) / (DOT_SIZE + GAP));
+    
+    if (col >= 0 && col < cols && row >= 0) {
+      const index = row * cols + col;
+      if (index >= 0 && index < segments.length) {
+        onClickSegment(segments[index]);
+      }
+    }
+  };
+
   return (
-    <div className="w-full h-full overflow-y-auto custom-scrollbar p-1">
+    <div ref={containerRef} className="w-full h-full overflow-y-auto custom-scrollbar p-1">
         {segments.length === 0 ? (
             <div className="flex h-full items-center justify-center text-slate-400 text-xs italic">
                 No data
             </div>
         ) : (
-            <div className="flex flex-wrap gap-[2px]">
-            {segments.map((s, i) => {
-                let bg = 'bg-slate-200 hover:bg-slate-300';
-                if (s.status === 'TRANSLATING') bg = 'bg-brand-400 animate-pulse';
-                if (s.status === 'TRANSLATED') bg = 'bg-emerald-400 hover:bg-emerald-500';
-                if (s.status === 'FAILED') bg = 'bg-rose-400 hover:bg-rose-500';
-                if (s.status === 'SKIPPED') bg = 'bg-amber-200 hover:bg-amber-300';
-                
-                return (
-                    <div 
-                        key={s.id} 
-                        className={`w-2 h-2 rounded-[1px] cursor-pointer transition-colors duration-150 ${bg}`} 
-                        title={`#${i}: ${s.status}`}
-                        onClick={() => onClickSegment && onClickSegment(s)}
-                    />
-                );
-            })}
-            </div>
+            <canvas ref={canvasRef} onClick={handleClick} className="cursor-pointer" />
         )}
     </div>
   );
@@ -311,6 +376,8 @@ export const BookPage = ({ title, content, lang = 'en', isLoading = false, isEmp
         ? (fontType === 'serif' ? 'font-arabicSerif' : 'font-arabic')
         : (fontType === 'serif' ? 'font-serif' : 'font-sans');
 
+    const sanitizedContent = useMemo(() => DOMPurify.sanitize(content || ''), [content]);
+
     return (
         <div className="flex flex-col h-full bg-white shadow-sm border border-slate-200 rounded-xl overflow-hidden relative group transition-all duration-300 hover:shadow-md hover:border-brand-200/50">
             <div className="h-10 border-b border-slate-100 flex items-center justify-between px-4 bg-slate-50/80 backdrop-blur-sm shrink-0">
@@ -347,7 +414,7 @@ export const BookPage = ({ title, content, lang = 'en', isLoading = false, isEmp
                 <div 
                     className={`book-content prose prose-slate max-w-none leading-loose transition-all duration-200 ease-in-out ${fontClass}`} 
                     style={{ fontSize: `${fontSize}px` }}
-                    dangerouslySetInnerHTML={{ __html: content || '' }} 
+                    dangerouslySetInnerHTML={{ __html: sanitizedContent }} 
                 />
             </div>
         </div>
@@ -359,30 +426,35 @@ export const SplitView = ({ original, translated, isTranslating, fontSize, fontT
     const containerRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
 
-    const handleMouseDown = (e: React.MouseEvent) => {
+    const handleMouseDown = (e: React.MouseEvent | React.TouchEvent) => {
         e.preventDefault();
         setIsDragging(true);
         document.body.style.cursor = 'col-resize';
         document.body.style.userSelect = 'none';
         
-        const onMouseMove = (moveEvent: MouseEvent) => {
+        const onMove = (moveEvent: MouseEvent | TouchEvent) => {
             if (!containerRef.current) return;
+            const clientX = 'touches' in moveEvent ? moveEvent.touches[0].clientX : moveEvent.clientX;
             const rect = containerRef.current.getBoundingClientRect();
-            let newRatio = ((moveEvent.clientX - rect.left) / rect.width) * 100;
+            let newRatio = ((clientX - rect.left) / rect.width) * 100;
             newRatio = Math.max(20, Math.min(80, newRatio));
             setRatio(newRatio);
         };
 
-        const onMouseUp = () => {
+        const onUp = () => {
             setIsDragging(false);
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.removeEventListener('touchmove', onMove);
+            document.removeEventListener('touchend', onUp);
         };
 
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+        document.addEventListener('touchmove', onMove, { passive: false });
+        document.addEventListener('touchend', onUp);
     };
 
     return (
@@ -400,6 +472,7 @@ export const SplitView = ({ original, translated, isTranslating, fontSize, fontT
             <div 
                 className={`w-4 -ml-2 -mr-2 cursor-col-resize z-10 flex items-center justify-center group select-none`}
                 onMouseDown={handleMouseDown}
+                onTouchStart={handleMouseDown}
             >
                 <div className={`w-1 h-12 rounded-full transition-all duration-300 ${isDragging ? 'bg-brand-500 h-16 w-1.5' : 'bg-slate-200 group-hover:bg-brand-400'}`} />
             </div>
