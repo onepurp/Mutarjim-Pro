@@ -51,14 +51,12 @@ The application implements a sequential processing queue stored in IndexedDB.
     ```
 
 ## Features
-
 *   **HTML-Aware Translation:** Uses specialized system instructions to ensure the AI translates text content while strictly preserving HTML tags and attributes.
 *   **Visual Split-View:** Compare the original English text side-by-side with the generated Arabic translation.
 *   **Backup & Restore:** Export your progress to a `.mtj` file to move between devices or browsers.
 *   **EPUB Reassembly:** Generates a valid, translated EPUB file ready for e-readers.
+*   **Lumina EPUB Architect:** A built-in diagnostic tool to analyze EPUB structure, detect CSS/HTML issues, and recommend fixes for better compatibility.
+*   **Dark Mode Support:** Fully responsive dark mode that automatically syncs with your system preferences or can be toggled manually.
+*   **Enhanced UI/UX:** Interactive, DOM-based Segment Map for tracking translation progress, resizable System & AI Console, and improved Split-View editor.
 
-
-## License
-
-[MIT](https://choosealicense.com/licenses/mit/)
 
