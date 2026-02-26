@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { AppState, Segment, SegmentStatus, LogType, ProjectData } from '../types';
 import { dbService } from '../services/db';
 import { geminiService } from '../services/geminiService';

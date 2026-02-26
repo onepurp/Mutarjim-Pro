@@ -6,8 +6,16 @@
     <title>Mutarjim Pro - AI EPUB Translator</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Kufi+Arabic:wght@300;400;500;700&family=Amiri:wght@400;700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Kufi+Arabic:wght@400;500&family=Amiri:wght@400;700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/index.css">
+    <script>
+      // Early dark mode detection to prevent flash
+      if (localStorage.getItem('mutarjim-theme') === 'dark' || (!('mutarjim-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    </script>
   <script type="importmap">
 {
   "imports": {
@@ -25,7 +33,7 @@
 }
 </script>
 </head>
-  <body class="bg-slate-50 text-slate-900 antialiased h-screen overflow-hidden flex flex-col selection:bg-brand-100 selection:text-brand-900">
+  <body class="bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-50 antialiased h-screen overflow-hidden flex flex-col selection:bg-sky-100 dark:selection:bg-sky-900/50 selection:text-sky-900 dark:selection:text-sky-100 transition-colors duration-200">
     <div id="root" class="h-full flex flex-col"></div>
   <script type="module" src="/index.tsx"></script>
 </body>
