@@ -354,6 +354,9 @@ export const Console = React.memo(({ systemLogs, aiLogs, isOpen, toggle }: { sys
   const [tab, setTab] = useState<'SYSTEM' | 'AI'>('SYSTEM');
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [height, setHeight] = useState(288); // Default 72 * 4 = 288px
+  const [isResizing, setIsResizing] = useState(false);
+  const isResizingRef = useRef(false);
 
   // Auto-scroll logic
   useEffect(() => {
@@ -370,8 +373,48 @@ export const Console = React.memo(({ systemLogs, aiLogs, isOpen, toggle }: { sys
       setAutoScroll(isAtBottom);
   };
 
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const newHeight = window.innerHeight - e.clientY;
+      if (newHeight > 100 && newHeight < window.innerHeight - 100) {
+        setHeight(newHeight);
+      }
+    };
+    const handleMouseUp = () => {
+      if (isResizingRef.current) {
+        isResizingRef.current = false;
+        setIsResizing(false);
+        document.body.style.cursor = 'default';
+        document.body.style.userSelect = 'auto';
+      }
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
+
+  const startResizing = (e: React.MouseEvent) => {
+    isResizingRef.current = true;
+    setIsResizing(true);
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+  };
+
   return (
-    <div className={`bg-slate-900 border-t border-slate-800 flex flex-col transition-all duration-300 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-20 ${isOpen ? 'h-72' : 'h-10'}`}>
+    <div 
+        className={`bg-slate-900 border-t border-slate-800 flex flex-col shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-20 relative ${!isResizing ? 'transition-[height] duration-300' : ''}`} 
+        style={{ height: isOpen ? `${height}px` : '40px' }}
+    >
+        {isOpen && (
+            <div 
+                className="absolute top-0 left-0 right-0 h-1.5 cursor-ns-resize hover:bg-sky-500/50 z-30 transition-colors"
+                onMouseDown={startResizing}
+            />
+        )}
         
         {/* Header Bar */}
         <div className="h-10 flex items-center justify-between px-2 bg-slate-950/50 border-b border-white/5 shrink-0">

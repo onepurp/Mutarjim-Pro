@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Upload, Book, Play, Pause, Download, AlertCircle, Save, FolderOpen, Image as ImageIcon, Settings, Home, FileText, ChevronRight, ChevronLeft, Edit3, RefreshCw, X, Check, Globe, LogOut, Type, Minus, Plus, AlignLeft, AlignCenter, AlignRight, AlignJustify, Layout, Wand2, Moon, Sun } from 'lucide-react';
+import { Upload, Book, Play, Pause, Download, AlertCircle, Save, FolderOpen, Image as ImageIcon, Settings, Home, FileText, ChevronRight, ChevronLeft, Edit3, RefreshCw, X, Check, Globe, LogOut, Type, Minus, Plus, AlignLeft, AlignCenter, AlignRight, AlignJustify, Layout, Wand2, Moon, Sun, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { AppState, ProjectData, Segment, SegmentStatus, SystemLogEntry, LogType, LiveLogItem, AIDebugLogEntry, ExportSettings } from './types';
 import { dbService } from './services/db';
 import { epubService } from './services/epubService';
@@ -45,6 +45,7 @@ const App = () => {
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   
   // Studio UI State
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activeSegmentIndex, setActiveSegmentIndex] = useState<number>(-1);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editArabicTitle, setEditArabicTitle] = useState('');
@@ -404,102 +405,161 @@ const App = () => {
   return (
       <div className="h-screen flex bg-slate-50 dark:bg-slate-900 overflow-hidden font-sans transition-colors duration-200">
           {/* Sidebar */}
-          <aside className="w-80 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col z-20 shadow-sm transition-colors duration-200">
-              <div className="h-14 flex items-center px-6 border-b border-slate-100 dark:border-slate-700 gap-3 shrink-0">
-                   <div className="w-7 h-7 bg-sky-500 rounded-md flex items-center justify-center">
-                       <Book className="text-white w-3.5 h-3.5" />
-                   </div>
-                   <span className="font-bold text-slate-800 dark:text-slate-50 tracking-tight text-sm">Mutarjim Pro</span>
+          <aside className={`${isSidebarOpen ? 'w-80' : 'w-20'} bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col z-20 shadow-sm transition-all duration-300 shrink-0`}>
+              <div className={`h-14 flex items-center border-b border-slate-100 dark:border-slate-700 shrink-0 relative ${isSidebarOpen ? 'px-6 justify-between' : 'px-0 justify-center'}`}>
+                   {isSidebarOpen && (
+                       <div className="flex items-center gap-3">
+                           <div className="w-7 h-7 bg-sky-500 rounded-md flex items-center justify-center">
+                               <Book className="text-white w-3.5 h-3.5" />
+                           </div>
+                           <span className="font-bold text-slate-800 dark:text-slate-50 tracking-tight text-sm">Mutarjim Pro</span>
+                       </div>
+                   )}
+                   <button 
+                       onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
+                       className={`p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors`}
+                       title={isSidebarOpen ? "Collapse Sidebar" : "Expand Sidebar"}
+                   >
+                       {isSidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
+                   </button>
               </div>
 
-              <div className="p-6 flex-1 overflow-y-auto space-y-8 custom-scrollbar">
-                  {/* Cover & Title */}
-                  <div className="flex flex-col items-center text-center">
-                      <div className="w-28 h-40 bg-slate-200 dark:bg-slate-700 rounded-md shadow-sm mb-4 overflow-hidden relative group">
-                          {project.coverUrl ? (
-                              <img src={project.coverUrl} className="w-full h-full object-cover" />
-                          ) : (
-                              <div className="flex items-center justify-center h-full text-slate-400 dark:text-slate-500">
-                                  <ImageIcon className="w-8 h-8" />
+              <div className={`flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden ${isSidebarOpen ? 'p-6 space-y-8' : 'p-2 space-y-6 flex flex-col items-center'}`}>
+                  {isSidebarOpen ? (
+                      <>
+                          {/* Cover & Title */}
+                          <div className="flex flex-col items-center text-center">
+                              <div className="w-28 h-40 bg-slate-200 dark:bg-slate-700 rounded-md shadow-sm mb-4 overflow-hidden relative group">
+                                  {project.coverUrl ? (
+                                      <img src={project.coverUrl} className="w-full h-full object-cover" />
+                                  ) : (
+                                      <div className="flex items-center justify-center h-full text-slate-400 dark:text-slate-500">
+                                          <ImageIcon className="w-8 h-8" />
+                                      </div>
+                                  )}
+                                  <label className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                                       <span className="text-white text-xs font-bold border border-white/50 px-2 py-1 rounded">Change Cover</span>
+                                       <input type="file" className="hidden" accept="image/*" onChange={(e) => {
+                                           if (e.target.files?.[0]) {
+                                               project.customCoverBlob = e.target.files[0];
+                                               project.coverUrl = URL.createObjectURL(e.target.files[0]);
+                                               dbService.saveProject(project);
+                                               setProject({...project});
+                                           }
+                                       }} />
+                                  </label>
                               </div>
-                          )}
-                          <label className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
-                               <span className="text-white text-xs font-bold border border-white/50 px-2 py-1 rounded">Change Cover</span>
-                               <input type="file" className="hidden" accept="image/*" onChange={(e) => {
-                                   if (e.target.files?.[0]) {
-                                       project.customCoverBlob = e.target.files[0];
-                                       project.coverUrl = URL.createObjectURL(e.target.files[0]);
-                                       dbService.saveProject(project);
-                                       setProject({...project});
-                                   }
+                              <h2 className="font-bold text-slate-900 dark:text-slate-50 line-clamp-2 leading-tight mb-1 text-sm">{project.title}</h2>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">{project.author}</p>
+                              {project.arabicTitle && (
+                                  <div className="bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-300 px-3 py-1 rounded-full text-xs font-arabic">{project.arabicTitle}</div>
+                              )}
+                              <Button variant="ghost" size="sm" className="mt-2 text-xs" onClick={openProjectSettings}>
+                                  Edit Details
+                              </Button>
+                          </div>
+
+                          {/* Stats */}
+                          <div className="space-y-4">
+                              <Label>Translation Progress</Label>
+                              <ProgressBar current={project.translatedSegments} total={project.totalSegments} />
+                              <div className="grid grid-cols-2 gap-3">
+                                  <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-100 dark:border-slate-700/50 text-center">
+                                      <div className="text-xl font-bold text-slate-900 dark:text-slate-50">{project.translatedSegments}</div>
+                                      <div className="text-[10px] uppercase text-slate-500 dark:text-slate-400 font-semibold mt-1">Done</div>
+                                  </div>
+                                  <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-100 dark:border-slate-700/50 text-center">
+                                      <div className="text-xl font-bold text-slate-900 dark:text-slate-50">{project.totalSegments - project.translatedSegments}</div>
+                                      <div className="text-[10px] uppercase text-slate-500 dark:text-slate-400 font-semibold mt-1">Remaining</div>
+                                  </div>
+                              </div>
+                          </div>
+
+                          {/* Controls */}
+                          <div className="space-y-2">
+                              <Label>Actions</Label>
+                              {appState === AppState.TRANSLATING ? (
+                                  <Button onClick={togglePlayPause} className="w-full bg-amber-500 hover:bg-amber-600 text-white shadow-sm dark:bg-amber-600 dark:hover:bg-amber-500 dark:text-slate-900">
+                                      <Pause className="w-4 h-4 mr-2" /> Pause
+                                  </Button>
+                              ) : (
+                                  <Button onClick={togglePlayPause} disabled={appState === AppState.COMPLETED} className="w-full">
+                                      <Play className="w-4 h-4 mr-2" /> 
+                                      {appState === AppState.IDLE ? 'Start Translation' : 'Resume'}
+                                  </Button>
+                              )}
+                              
+                              {skippedCount > 0 && appState !== AppState.TRANSLATING && (
+                                  <Button variant="outline" onClick={retrySkipped} className="w-full border-amber-200 text-amber-700 hover:bg-amber-50 dark:border-amber-800/50 dark:text-amber-400 dark:hover:bg-amber-900/20">
+                                      <RefreshCw className="w-4 h-4 mr-2" /> Retry {skippedCount} Skipped
+                                  </Button>
+                              )}
+
+                              <Button variant="secondary" onClick={handleBackup} className="w-full">
+                                  <Save className="w-4 h-4 mr-2" /> Backup Project
+                              </Button>
+                          </div>
+                          
+                          {/* Minimap */}
+                          <div className="flex-1 min-h-[120px] border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900/50 p-2">
+                               <SegmentMap segments={segments} onClickSegment={(s) => {
+                                   const idx = segments.findIndex(seg => seg.id === s.id);
+                                   if (idx !== -1) setActiveSegmentIndex(idx);
                                }} />
-                          </label>
-                      </div>
-                      <h2 className="font-bold text-slate-900 dark:text-slate-50 line-clamp-2 leading-tight mb-1 text-sm">{project.title}</h2>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">{project.author}</p>
-                      {project.arabicTitle && (
-                          <div className="bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-300 px-3 py-1 rounded-full text-xs font-arabic">{project.arabicTitle}</div>
-                      )}
-                      <Button variant="ghost" size="sm" className="mt-2 text-xs" onClick={openProjectSettings}>
-                          Edit Details
-                      </Button>
-                  </div>
-
-                  {/* Stats */}
-                  <div className="space-y-4">
-                      <Label>Translation Progress</Label>
-                      <ProgressBar current={project.translatedSegments} total={project.totalSegments} />
-                      <div className="grid grid-cols-2 gap-3">
-                          <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-100 dark:border-slate-700/50 text-center">
-                              <div className="text-xl font-bold text-slate-900 dark:text-slate-50">{project.translatedSegments}</div>
-                              <div className="text-[10px] uppercase text-slate-500 dark:text-slate-400 font-semibold mt-1">Done</div>
                           </div>
-                          <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-100 dark:border-slate-700/50 text-center">
-                              <div className="text-xl font-bold text-slate-900 dark:text-slate-50">{project.totalSegments - project.translatedSegments}</div>
-                              <div className="text-[10px] uppercase text-slate-500 dark:text-slate-400 font-semibold mt-1">Remaining</div>
+                      </>
+                  ) : (
+                      <>
+                          {/* Mini Progress */}
+                          <div className="flex flex-col items-center gap-2 w-full mt-2">
+                              <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Prog</div>
+                              <div className="text-sm font-bold text-sky-500">{progressPercent}%</div>
+                              <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                                  <div className="bg-sky-500 h-full rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }} />
+                              </div>
                           </div>
-                      </div>
-                  </div>
 
-                  {/* Controls */}
-                  <div className="space-y-2">
-                      <Label>Actions</Label>
-                      {appState === AppState.TRANSLATING ? (
-                          <Button onClick={togglePlayPause} className="w-full bg-amber-500 hover:bg-amber-600 text-white shadow-sm dark:bg-amber-600 dark:hover:bg-amber-500 dark:text-slate-900">
-                              <Pause className="w-4 h-4 mr-2" /> Pause
-                          </Button>
-                      ) : (
-                          <Button onClick={togglePlayPause} disabled={appState === AppState.COMPLETED} className="w-full">
-                              <Play className="w-4 h-4 mr-2" /> 
-                              {appState === AppState.IDLE ? 'Start Translation' : 'Resume'}
-                          </Button>
-                      )}
-                      
-                      {skippedCount > 0 && appState !== AppState.TRANSLATING && (
-                          <Button variant="outline" onClick={retrySkipped} className="w-full border-amber-200 text-amber-700 hover:bg-amber-50 dark:border-amber-800/50 dark:text-amber-400 dark:hover:bg-amber-900/20">
-                              <RefreshCw className="w-4 h-4 mr-2" /> Retry {skippedCount} Skipped
-                          </Button>
-                      )}
+                          {/* Mini Actions */}
+                          <div className="flex flex-col items-center gap-3 w-full border-t border-slate-100 dark:border-slate-700 pt-4">
+                              <Button 
+                                  variant={appState === AppState.TRANSLATING ? "secondary" : "primary"} 
+                                  size="icon" 
+                                  className={`w-10 h-10 rounded-full ${appState === AppState.TRANSLATING ? 'bg-amber-500 hover:bg-amber-600 text-white border-transparent dark:bg-amber-600 dark:hover:bg-amber-500 dark:text-slate-900' : ''}`}
+                                  onClick={togglePlayPause}
+                                  title={appState === AppState.TRANSLATING ? "Pause" : "Start Translation"}
+                                  disabled={appState === AppState.COMPLETED}
+                              >
+                                  {appState === AppState.TRANSLATING ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                              </Button>
+                              
+                              {skippedCount > 0 && appState !== AppState.TRANSLATING && (
+                                  <Button variant="outline" size="icon" onClick={retrySkipped} className="w-8 h-8 rounded-full border-amber-200 text-amber-700 dark:border-amber-800/50 dark:text-amber-400 dark:hover:bg-amber-900/20" title={`Retry ${skippedCount} Skipped`}>
+                                      <RefreshCw className="w-3 h-3" />
+                                  </Button>
+                              )}
+                          </div>
 
-                      <Button variant="secondary" onClick={handleBackup} className="w-full">
-                          <Save className="w-4 h-4 mr-2" /> Backup Project
-                      </Button>
-                  </div>
-                  
-                  {/* Minimap */}
-                  <div className="flex-1 min-h-[120px] border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900/50 p-2">
-                       <SegmentMap segments={segments} onClickSegment={(s) => {
-                           const idx = segments.findIndex(seg => seg.id === s.id);
-                           if (idx !== -1) setActiveSegmentIndex(idx);
-                       }} />
-                  </div>
+                          {/* Mini Minimap */}
+                          <div className="flex-1 w-full min-h-[120px] border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900/50 p-1 mt-2">
+                               <SegmentMap segments={segments} onClickSegment={(s) => {
+                                   const idx = segments.findIndex(seg => seg.id === s.id);
+                                   if (idx !== -1) setActiveSegmentIndex(idx);
+                               }} />
+                          </div>
+                      </>
+                  )}
               </div>
               
-              <div className="p-4 border-t border-slate-200 dark:border-slate-700 shrink-0">
-                   <Button variant="ghost" size="sm" className="w-full justify-start text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:text-rose-400 dark:hover:text-rose-300 dark:hover:bg-rose-900/20" onClick={() => setView('landing')}>
-                       <LogOut className="w-4 h-4 mr-2" /> Close Project
-                   </Button>
-                   <button onClick={deleteProject} className="w-full text-[10px] text-slate-400 hover:text-rose-500 dark:text-slate-500 dark:hover:text-rose-400 mt-2 transition-colors">Delete Project Data</button>
+              <div className={`p-4 border-t border-slate-200 dark:border-slate-700 shrink-0 ${isSidebarOpen ? 'flex justify-center' : 'flex flex-col items-center px-2'}`}>
+                   {isSidebarOpen ? (
+                       <Button variant="ghost" size="sm" className="w-full justify-center text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:text-rose-400 dark:hover:text-rose-300 dark:hover:bg-rose-900/20" onClick={() => setView('landing')}>
+                           <LogOut className="w-4 h-4 mr-2" /> Close Project
+                       </Button>
+                   ) : (
+                       <Button variant="ghost" size="icon" className="w-10 h-10 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:text-rose-400 dark:hover:text-rose-300 dark:hover:bg-rose-900/20" onClick={() => setView('landing')} title="Close Project">
+                           <LogOut className="w-5 h-5" />
+                       </Button>
+                   )}
               </div>
           </aside>
 
@@ -568,45 +628,7 @@ const App = () => {
                       </div>
                   </div>
                   
-                  {/* Action Bar */}
-                  {activeSegment && (
-                      <div className="h-14 shrink-0 flex items-center justify-between px-6 mx-6 mb-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm">
-                          <div className="flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
-                              {/* Keyboard shortcuts removed */}
-                          </div>
-                          <div className="flex items-center gap-2">
-                              <Button 
-                                variant="secondary" 
-                                size="sm" 
-                                onClick={() => setActiveSegmentIndex(i => Math.max(0, i - 1))}
-                                disabled={activeSegmentIndex <= 0}
-                              >
-                                  Previous
-                              </Button>
-                              <Button 
-                                variant="primary" 
-                                size="sm" 
-                                onClick={() => {
-                                    const segment = segmentsRef.current[activeSegmentIndex];
-                                    if (segment && segment.status !== SegmentStatus.TRANSLATED) {
-                                        const updatedSegment = { ...segment, status: SegmentStatus.TRANSLATED };
-                                        dbService.updateSegment(updatedSegment).then(() => {
-                                            const newSegments = [...segmentsRef.current];
-                                            newSegments[activeSegmentIndex] = updatedSegment;
-                                            segmentsRef.current = newSegments;
-                                            setSegments(newSegments);
-                                        });
-                                    }
-                                    const nextIdx = segmentsRef.current.findIndex((s, i) => i > activeSegmentIndex && s.status === SegmentStatus.PENDING);
-                                    if (nextIdx !== -1) setActiveSegmentIndex(nextIdx);
-                                    else setActiveSegmentIndex(Math.min(segmentsRef.current.length - 1, activeSegmentIndex + 1));
-                                }}
-                              >
-                                  <Check className="w-4 h-4 mr-1.5" /> Approve & Next
-                              </Button>
-                          </div>
-                      </div>
-                  )}
+                  {/* Action Bar removed */}
                   
                   {/* System Console */}
                   <Console 

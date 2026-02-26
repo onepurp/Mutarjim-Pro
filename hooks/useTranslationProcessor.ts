@@ -3,6 +3,37 @@ import { AppState, Segment, SegmentStatus, LogType, ProjectData } from '../types
 import { dbService } from '../services/db';
 import { geminiService } from '../services/geminiService';
 
+const playRingSound = () => {
+    try {
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        
+        const playTone = (freq: number, startTime: number, duration: number) => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, startTime);
+            
+            gain.gain.setValueAtTime(0, startTime);
+            gain.gain.linearRampToValueAtTime(0.5, startTime + 0.05);
+            gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+            
+            osc.start(startTime);
+            osc.stop(startTime + duration);
+        };
+
+        const now = audioCtx.currentTime;
+        // Play a distinctive "ding-dong" alert sound
+        playTone(880, now, 0.4); // A5
+        playTone(659.25, now + 0.3, 0.6); // E5
+    } catch (e) {
+        console.error("Audio playback failed", e);
+    }
+};
+
 export const useTranslationProcessor = (
     appState: AppState,
     setAppState: React.Dispatch<React.SetStateAction<AppState>>,
@@ -59,9 +90,12 @@ export const useTranslationProcessor = (
                     const isQuota = err.message?.includes('429') || err.status === 429;
                     
                     if (isQuota) {
-                        isQuotaHit = true;
-                        setAppState(AppState.QUOTA_PAUSED);
-                        addLog("API Quota hit. Pausing.", 'WARNING');
+                        if (!isQuotaHit) {
+                            isQuotaHit = true;
+                            setAppState(AppState.QUOTA_PAUSED);
+                            addLog("API Quota hit. Pausing.", 'WARNING');
+                            playRingSound();
+                        }
                         
                         segment.status = SegmentStatus.PENDING;
                         await dbService.updateSegment(segment);
