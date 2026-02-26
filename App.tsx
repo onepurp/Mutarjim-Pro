@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Upload, Book, Play, Pause, Download, AlertCircle, Save, FolderOpen, Image as ImageIcon, Settings, Home, FileText, ChevronRight, ChevronLeft, Edit3, RefreshCw, X, Check, Globe, LogOut, Type, Minus, Plus, AlignLeft, AlignCenter, AlignRight, AlignJustify, Layout, Wand2, Moon, Sun, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import { AppState, ProjectData, Segment, SegmentStatus, SystemLogEntry, LogType, LiveLogItem, AIDebugLogEntry, ExportSettings } from './types';
+import { AppState, ProjectData, Segment, SegmentStatus, SystemLogEntry, LogType, LiveLogItem, AIDebugLogEntry, ExportSettings, ArchitectAnalysisResult } from './types';
 import { dbService } from './services/db';
 import { epubService } from './services/epubService';
 import { geminiService } from './services/geminiService';
 import { backupService } from './services/backupService';
 import { useTranslationProcessor } from './hooks/useTranslationProcessor';
 import { Button, Card, ProgressBar, Badge, Spinner, SegmentMap, Console, Modal, Input, Label, SplitView } from './components/ui';
+import { AnalysisReport } from './components/AnalysisReport';
 
 function useDarkMode() {
   const [isDark, setIsDark] = useState(() => {
@@ -48,6 +49,9 @@ const App = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activeSegmentIndex, setActiveSegmentIndex] = useState<number>(-1);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'general' | 'architect'>('general');
+  const [architectResult, setArchitectResult] = useState<ArchitectAnalysisResult | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [editArabicTitle, setEditArabicTitle] = useState('');
   const [isTranslatingTitle, setIsTranslatingTitle] = useState(false);
   const [editExportSettings, setEditExportSettings] = useState<ExportSettings>({
@@ -402,6 +406,72 @@ const App = () => {
   const progressPercent = Math.round((project.translatedSegments / project.totalSegments) * 100) || 0;
   const skippedCount = segments.filter(s => s.status === SegmentStatus.SKIPPED).length;
 
+  const handleAnalyzeEpub = async () => {
+    setIsAnalyzing(true);
+    // Simulate analysis delay
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    setArchitectResult({
+      metadata: {
+        title: project?.title || 'Unknown',
+        creator: project?.author || 'Unknown',
+        language: 'en',
+        identifier: 'urn:uuid:12345'
+      },
+      issues: [
+        {
+          id: '1',
+          type: 'WARNING',
+          category: 'CSS',
+          description: 'Hardcoded text alignment found in CSS',
+          recommendation: 'Standardize CSS to allow global text direction control.',
+          autoFixable: true
+        },
+        {
+          id: '2',
+          type: 'INFO',
+          category: 'STRUCTURE',
+          description: 'Missing semantic HTML5 tags',
+          recommendation: 'Wrap content in <section> and <article> tags for better compatibility.',
+          autoFixable: true
+        }
+      ],
+      manifestCount: 24,
+      cssFileCount: 2,
+      originalSize: project?.sourceEpubBlob.size || 0,
+      detectedLanguage: 'English',
+      isRTL: false,
+      bookPersonality: 'Modern Non-Fiction',
+      tocStatus: {
+        exists: true,
+        path: 'toc.ncx',
+        brokenLinks: 0,
+        type: 'NCX'
+      },
+      fontRecommendations: [],
+      typographyProfile: {
+        themeName: 'Default',
+        lineHeight: '1.6',
+        paragraphSpacing: '1em',
+        headingTopMargin: '2em',
+        headingBottomMargin: '1em',
+        maxWidth: '100%',
+        baseFontSize: '1em'
+      }
+    });
+    setIsAnalyzing(false);
+  };
+
+  const handleRepairEpub = async () => {
+    // Mock repair
+    setIsAnalyzing(true);
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    setArchitectResult(null);
+    setIsAnalyzing(false);
+    setIsEditModalOpen(false);
+    // You could add a toast notification here
+  };
+
   return (
       <div className="h-screen flex bg-slate-50 dark:bg-slate-900 overflow-hidden font-sans transition-colors duration-200">
           {/* Sidebar */}
@@ -643,111 +713,161 @@ const App = () => {
 
           {/* Project Settings Modal */}
           <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} title="Project Settings">
-              <div className="space-y-4">
-                  {/* Metadata Section */}
-                  <div>
-                      <Label>Book Title (Arabic)</Label>
-                      <div className="flex gap-2">
-                        <Input 
-                            value={editArabicTitle} 
-                            onChange={(e) => setEditArabicTitle(e.target.value)} 
-                            placeholder="e.g. الكتاب المترجم"
-                            dir="rtl"
-                            className="font-arabic"
-                        />
-                        <Button 
-                            variant="secondary" 
-                            size="icon" 
-                            onClick={handleMagicTranslate}
-                            disabled={isTranslatingTitle}
-                            title="Auto-translate title"
-                            className="shrink-0"
-                        >
-                             {isTranslatingTitle ? <Spinner className="w-4 h-4" /> : <Wand2 className="w-4 h-4 text-sky-500" />}
-                        </Button>
-                      </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">This title will be used inside the EPUB and for the filename.</p>
-                  </div>
+              <div className="flex border-b border-slate-200 dark:border-slate-700 mb-4">
+                  <button
+                      className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${settingsTab === 'general' ? 'border-sky-500 text-sky-600 dark:text-sky-400' : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                      onClick={() => setSettingsTab('general')}
+                  >
+                      General
+                  </button>
+                  <button
+                      className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${settingsTab === 'architect' ? 'border-sky-500 text-sky-600 dark:text-sky-400' : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                      onClick={() => setSettingsTab('architect')}
+                  >
+                      EPUB Architect
+                  </button>
+              </div>
 
-                  {/* HTML Alignment Options */}
-                  <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-700">
-                      <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Text Alignment</h4>
-                      
-                      <div className="space-y-2">
-                        <Label>Global Text Direction</Label>
-                        <div className="flex gap-2">
+              {settingsTab === 'general' && (
+                  <div className="space-y-4">
+                      {/* Metadata Section */}
+                      <div>
+                          <Label>Book Title (Arabic)</Label>
+                          <div className="flex gap-2">
+                            <Input 
+                                value={editArabicTitle} 
+                                onChange={(e) => setEditArabicTitle(e.target.value)} 
+                                placeholder="e.g. الكتاب المترجم"
+                                dir="rtl"
+                                className="font-arabic"
+                            />
                             <Button 
-                                variant={editExportSettings.textAlignment === 'left' ? 'primary' : 'outline'} 
-                                onClick={() => setEditExportSettings(s => ({...s, textAlignment: 'left'}))}
-                                className="flex-1"
-                                title="Align Left"
-                                type="button"
+                                variant="secondary" 
+                                size="icon" 
+                                onClick={handleMagicTranslate}
+                                disabled={isTranslatingTitle}
+                                title="Auto-translate title"
+                                className="shrink-0"
                             >
-                                <AlignLeft className="w-4 h-4 mr-2" /> Left
+                                 {isTranslatingTitle ? <Spinner className="w-4 h-4" /> : <Wand2 className="w-4 h-4 text-sky-500" />}
                             </Button>
-                            <Button 
-                                variant={editExportSettings.textAlignment === 'center' ? 'primary' : 'outline'} 
-                                onClick={() => setEditExportSettings(s => ({...s, textAlignment: 'center'}))}
-                                className="flex-1"
-                                title="Align Center"
-                                type="button"
-                            >
-                                <AlignCenter className="w-4 h-4 mr-2" /> Center
-                            </Button>
-                            <Button 
-                                variant={editExportSettings.textAlignment === 'right' ? 'primary' : 'outline'} 
-                                onClick={() => setEditExportSettings(s => ({...s, textAlignment: 'right'}))}
-                                className="flex-1"
-                                title="Align Right (Standard Arabic)"
-                                type="button"
-                            >
-                                <AlignRight className="w-4 h-4 mr-2" /> Right
-                            </Button>
-                             <Button 
-                                variant={editExportSettings.textAlignment === 'justify' ? 'primary' : 'outline'} 
-                                onClick={() => setEditExportSettings(s => ({...s, textAlignment: 'justify'}))}
-                                className="flex-1"
-                                title="Justify"
-                                type="button"
-                            >
-                                <AlignJustify className="w-4 h-4 mr-2" /> Justify
-                            </Button>
-                        </div>
+                          </div>
+                          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">This title will be used inside the EPUB and for the filename.</p>
                       </div>
 
-                      <div className="flex items-start gap-3 bg-amber-50 dark:bg-amber-900/20 p-3 rounded-lg border border-amber-100 dark:border-amber-800/50">
-                          <input 
-                              type="checkbox" 
-                              id="forceAlignment" 
-                              checked={editExportSettings.forceAlignment} 
-                              onChange={(e) => setEditExportSettings(s => ({...s, forceAlignment: e.target.checked}))}
-                              className="w-4 h-4 mt-0.5 text-sky-500 rounded border-amber-300 dark:border-amber-700 focus:ring-sky-500 dark:bg-slate-800"
-                          />
-                          <div className="flex-1">
-                            <label htmlFor="forceAlignment" className="text-sm font-medium text-amber-900 dark:text-amber-400 block mb-0.5">Force Alignment Override</label>
-                            <p className="text-xs text-amber-700 dark:text-amber-500/80 leading-relaxed">
-                                If checked, this applies <code>!important</code> to CSS rules, overriding existing styles (like centered poems or quotes). 
-                                Uncheck this to preserve the book's original specific formatting while setting a default base direction.
-                            </p>
+                      {/* HTML Alignment Options */}
+                      <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-700">
+                          <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Text Alignment</h4>
+                          
+                          <div className="space-y-2">
+                            <Label>Global Text Direction</Label>
+                            <div className="flex gap-2">
+                                <Button 
+                                    variant={editExportSettings.textAlignment === 'left' ? 'primary' : 'outline'} 
+                                    onClick={() => setEditExportSettings(s => ({...s, textAlignment: 'left'}))}
+                                    className="flex-1"
+                                    title="Align Left"
+                                    type="button"
+                                >
+                                    <AlignLeft className="w-4 h-4 mr-2" /> Left
+                                </Button>
+                                <Button 
+                                    variant={editExportSettings.textAlignment === 'center' ? 'primary' : 'outline'} 
+                                    onClick={() => setEditExportSettings(s => ({...s, textAlignment: 'center'}))}
+                                    className="flex-1"
+                                    title="Align Center"
+                                    type="button"
+                                >
+                                    <AlignCenter className="w-4 h-4 mr-2" /> Center
+                                </Button>
+                                <Button 
+                                    variant={editExportSettings.textAlignment === 'right' ? 'primary' : 'outline'} 
+                                    onClick={() => setEditExportSettings(s => ({...s, textAlignment: 'right'}))}
+                                    className="flex-1"
+                                    title="Align Right (Standard Arabic)"
+                                    type="button"
+                                >
+                                    <AlignRight className="w-4 h-4 mr-2" /> Right
+                                </Button>
+                                 <Button 
+                                    variant={editExportSettings.textAlignment === 'justify' ? 'primary' : 'outline'} 
+                                    onClick={() => setEditExportSettings(s => ({...s, textAlignment: 'justify'}))}
+                                    className="flex-1"
+                                    title="Justify"
+                                    type="button"
+                                >
+                                    <AlignJustify className="w-4 h-4 mr-2" /> Justify
+                                </Button>
+                            </div>
+                          </div>
+
+                          <div className="flex items-start gap-3 bg-amber-50 dark:bg-amber-900/20 p-3 rounded-lg border border-amber-100 dark:border-amber-800/50">
+                              <input 
+                                  type="checkbox" 
+                                  id="forceAlignment" 
+                                  checked={editExportSettings.forceAlignment} 
+                                  onChange={(e) => setEditExportSettings(s => ({...s, forceAlignment: e.target.checked}))}
+                                  className="w-4 h-4 mt-0.5 text-sky-500 rounded border-amber-300 dark:border-amber-700 focus:ring-sky-500 dark:bg-slate-800"
+                              />
+                              <div className="flex-1">
+                                <label htmlFor="forceAlignment" className="text-sm font-medium text-amber-900 dark:text-amber-400 block mb-0.5">Force Alignment Override</label>
+                                <p className="text-xs text-amber-700 dark:text-amber-500/80 leading-relaxed">
+                                    If checked, this applies <code>!important</code> to CSS rules, overriding existing styles (like centered poems or quotes). 
+                                    Uncheck this to preserve the book's original specific formatting while setting a default base direction.
+                                </p>
+                              </div>
                           </div>
                       </div>
-                  </div>
 
-                  <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
-                      <Button variant="secondary" onClick={() => setIsEditModalOpen(false)}>Cancel</Button>
-                      <Button onClick={() => {
-                          const updated = { 
-                              ...project, 
-                              arabicTitle: editArabicTitle,
-                              exportSettings: editExportSettings
-                          };
-                          setProject(updated);
-                          setExportSettings(editExportSettings);
-                          dbService.saveProject(updated);
-                          setIsEditModalOpen(false);
-                      }}>Save Changes</Button>
+                      <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
+                          <Button variant="secondary" onClick={() => setIsEditModalOpen(false)}>Cancel</Button>
+                          <Button onClick={() => {
+                              const updated = { 
+                                  ...project, 
+                                  arabicTitle: editArabicTitle,
+                                  exportSettings: editExportSettings
+                              };
+                              setProject(updated);
+                              setExportSettings(editExportSettings);
+                              dbService.saveProject(updated);
+                              setIsEditModalOpen(false);
+                          }}>Save Changes</Button>
+                      </div>
                   </div>
-              </div>
+              )}
+
+              {settingsTab === 'architect' && (
+                  <div className="space-y-4">
+                      {!architectResult ? (
+                          <div className="flex flex-col items-center justify-center py-12 text-center">
+                              <div className="w-16 h-16 bg-sky-100 dark:bg-sky-900/30 rounded-full flex items-center justify-center mb-4">
+                                  <Book className="w-8 h-8 text-sky-500" />
+                              </div>
+                              <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-50 mb-2">Lumina EPUB Architect</h3>
+                              <p className="text-sm text-slate-500 dark:text-slate-400 max-w-sm mb-6">
+                                  Diagnose structural issues, fix metadata, standardize CSS, and ensure EPUB3 compliance while preserving content integrity.
+                              </p>
+                              <Button 
+                                  onClick={handleAnalyzeEpub} 
+                                  disabled={isAnalyzing}
+                                  className="w-full max-w-xs"
+                              >
+                                  {isAnalyzing ? (
+                                      <><Spinner className="w-4 h-4 mr-2" /> Analyzing EPUB...</>
+                                  ) : (
+                                      <><Wand2 className="w-4 h-4 mr-2" /> Analyze EPUB Structure</>
+                                  )}
+                              </Button>
+                          </div>
+                      ) : (
+                          <AnalysisReport 
+                              result={architectResult} 
+                              onRepair={handleRepairEpub} 
+                              onCancel={() => setArchitectResult(null)} 
+                          />
+                      )}
+                  </div>
+              )}
           </Modal>
       </div>
   );

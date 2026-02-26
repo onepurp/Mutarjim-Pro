@@ -86,3 +86,75 @@ export interface LiveLogItem {
   timestamp: number;
   error?: string;
 }
+
+// EPUB Architect Types
+export interface EpubMetadata {
+  title: string;
+  creator: string;
+  language: string;
+  identifier: string;
+  publisher?: string;
+  description?: string;
+}
+
+export interface StructuralIssue {
+  id: string;
+  type: 'CRITICAL' | 'WARNING' | 'INFO';
+  category: 'METADATA' | 'STRUCTURE' | 'CSS' | 'COMPATIBILITY' | 'TOC';
+  description: string;
+  recommendation: string;
+  autoFixable: boolean;
+}
+
+export interface FontRecommendation {
+  role: 'body' | 'heading' | 'subheading' | 'quote' | 'code';
+  fontFamily: string;
+  kebabName: string;
+  category: 'serif' | 'sans-serif' | 'display' | 'monospace' | 'handwriting';
+  subset: string;
+  justification: string;
+}
+
+export interface TypographyProfile {
+  themeName: string;
+  lineHeight: string;
+  paragraphSpacing: string;
+  headingTopMargin: string;
+  headingBottomMargin: string;
+  maxWidth: string;
+  baseFontSize: string;
+}
+
+export interface ArchitectAnalysisResult {
+  metadata: EpubMetadata;
+  issues: StructuralIssue[];
+  manifestCount: number;
+  cssFileCount: number;
+  originalSize: number;
+  detectedLanguage: string;
+  isRTL: boolean;
+  bookPersonality: string;
+  tocStatus: {
+    exists: boolean;
+    path: string;
+    brokenLinks: number;
+    type: 'NCX' | 'NAV' | 'NONE';
+  };
+  fontRecommendations: FontRecommendation[];
+  typographyProfile: TypographyProfile;
+}
+
+export interface RepairActions {
+  fixMetadata: boolean;
+  standardizeCSS: boolean;
+  fixStructure: boolean;
+  addMissingTags: boolean;
+  fixTOC: boolean;
+  embedFonts: boolean;
+}
+
+export interface ProcessingLog {
+  timestamp: number;
+  message: string;
+  type: 'info' | 'success' | 'error';
+}
