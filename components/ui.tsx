@@ -113,7 +113,7 @@ export const Card = ({ children, className, hover = false }: { children?: React.
   </div>
 );
 
-export const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean; onClose: () => void; title: string; children?: React.ReactNode }) => {
+export const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-lg" }: { isOpen: boolean; onClose: () => void; title: string; children?: React.ReactNode; maxWidth?: string }) => {
     return (
         <AnimatePresence>
             {isOpen && (
@@ -128,15 +128,15 @@ export const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean; o
                         animate={{ scale: 1, opacity: 1 }}
                         exit={{ scale: 0.95, opacity: 0 }}
                         transition={{ type: "spring", duration: 0.3 }}
-                        className="bg-white dark:bg-slate-800 rounded-lg shadow-2xl w-full max-w-lg overflow-hidden border border-slate-100 dark:border-slate-700"
+                        className={cn("bg-white dark:bg-slate-800 rounded-lg shadow-2xl w-full overflow-hidden border border-slate-100 dark:border-slate-700 max-h-[90vh] flex flex-col", maxWidth)}
                     >
-                        <div className="flex justify-between items-center px-6 py-5 border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50">
+                        <div className="flex justify-between items-center px-6 py-5 border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 shrink-0">
                             <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-50">{title}</h3>
                             <button onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-slate-700/50 p-1 rounded-full transition-colors" aria-label="Close modal">
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
-                        <div className="p-6">
+                        <div className="p-6 overflow-y-auto custom-scrollbar">
                             {children}
                         </div>
                     </motion.div>
@@ -453,7 +453,7 @@ export const BookPage = React.memo(({ title, content, lang = 'en', isLoading = f
                  </div>
             </div>
             
-            <div className={`flex-1 overflow-y-auto p-8 custom-scrollbar relative ${lang === 'ar' ? 'text-right' : 'text-left'}`}>
+            <div className={`flex-1 overflow-y-auto p-4 md:p-8 custom-scrollbar relative ${lang === 'ar' ? 'text-right' : 'text-left'}`}>
                 {isEmpty && !isLoading && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-300 dark:text-slate-600 select-none">
                         <div className="w-16 h-16 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-full flex items-center justify-center mb-4 bg-slate-50 dark:bg-slate-800/50">
@@ -482,6 +482,17 @@ export const BookPage = React.memo(({ title, content, lang = 'en', isLoading = f
     )
 });
 
+export function useIsMobile() {
+    const [isMobile, setIsMobile] = useState(false);
+    useEffect(() => {
+        const check = () => setIsMobile(window.innerWidth < 768);
+        check();
+        window.addEventListener('resize', check);
+        return () => window.removeEventListener('resize', check);
+    }, []);
+    return isMobile;
+}
+
 export const SplitView = React.memo(({ original, translated, onTranslatedChange, isTranslating, fontSize, fontType }: { original: string, translated: string | null, onTranslatedChange: (val: string) => void, isTranslating: boolean, fontSize: number, fontType: 'serif' | 'sans' }) => {
     const [ratio, setRatio] = useState(() => {
         const saved = localStorage.getItem('mutarjim-split-ratio');
@@ -490,6 +501,7 @@ export const SplitView = React.memo(({ original, translated, onTranslatedChange,
     const containerRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [copied, setCopied] = useState(false);
+    const isMobile = useIsMobile();
 
     const handleCopy = () => {
         if (!translated) return;
@@ -499,6 +511,7 @@ export const SplitView = React.memo(({ original, translated, onTranslatedChange,
     };
 
     const handleMouseDown = (e: React.MouseEvent | React.TouchEvent) => {
+        if (isMobile) return;
         e.preventDefault();
         setIsDragging(true);
         document.body.style.cursor = 'col-resize';
@@ -533,8 +546,8 @@ export const SplitView = React.memo(({ original, translated, onTranslatedChange,
     const fontClass = fontType === 'serif' ? 'font-arabicSerif' : 'font-arabic';
 
     return (
-        <div ref={containerRef} className="flex h-full w-full gap-2 relative isolate">
-            <div style={{ width: `calc(${ratio}% - 4px)` }} className="h-full min-w-0 transition-[width] duration-75 ease-linear">
+        <div ref={containerRef} className="flex flex-col md:flex-row h-full w-full gap-2 relative isolate">
+            <div style={isMobile ? { flex: 1 } : { width: `calc(${ratio}% - 4px)` }} className="min-w-0 transition-[width] duration-75 ease-linear">
                 <BookPage 
                     title="Original Source" 
                     content={original} 
@@ -544,17 +557,19 @@ export const SplitView = React.memo(({ original, translated, onTranslatedChange,
                 />
             </div>
             
-            <div 
-                className={`w-4 -ml-2 -mr-2 cursor-col-resize z-10 flex items-center justify-center group select-none`}
-                onMouseDown={handleMouseDown}
-                onTouchStart={handleMouseDown}
-            >
-                <div className={`w-1.5 h-16 rounded-full flex items-center justify-center transition-all duration-300 ${isDragging ? 'bg-sky-500 scale-y-110' : 'bg-slate-200 dark:bg-slate-700 group-hover:bg-sky-400'}`}>
-                    <GripVertical className={`w-3 h-4 ${isDragging ? 'text-white' : 'text-slate-400 dark:text-slate-500 group-hover:text-white'} transition-colors`} />
+            {!isMobile && (
+                <div 
+                    className={`w-4 -ml-2 -mr-2 cursor-col-resize z-10 flex items-center justify-center group select-none`}
+                    onMouseDown={handleMouseDown}
+                    onTouchStart={handleMouseDown}
+                >
+                    <div className={`w-1.5 h-16 rounded-full flex items-center justify-center transition-all duration-300 ${isDragging ? 'bg-sky-500 scale-y-110' : 'bg-slate-200 dark:bg-slate-700 group-hover:bg-sky-400'}`}>
+                        <GripVertical className={`w-3 h-4 ${isDragging ? 'text-white' : 'text-slate-400 dark:text-slate-500 group-hover:text-white'} transition-colors`} />
+                    </div>
                 </div>
-            </div>
+            )}
 
-            <div style={{ width: `calc(${100 - ratio}% - 4px)` }} className="h-full min-w-0 transition-[width] duration-75 ease-linear">
+            <div style={isMobile ? { flex: 1 } : { width: `calc(${100 - ratio}% - 4px)` }} className="min-w-0 transition-[width] duration-75 ease-linear">
                 <div className="flex flex-col h-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden relative transition-all duration-300">
                     <div className="h-12 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between px-4 bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur-sm shrink-0">
                         <div className="flex items-center gap-3">
@@ -591,7 +606,7 @@ export const SplitView = React.memo(({ original, translated, onTranslatedChange,
 
                         <div
                             key={original}
-                            className={`w-full min-h-full resize-none bg-transparent border-none focus:ring-0 p-8 text-right outline-none text-slate-900 dark:text-slate-50 ${fontClass} prose prose-slate dark:prose-invert max-w-none leading-loose focus:bg-white dark:focus:bg-slate-800 transition-colors duration-300`}
+                            className={`w-full min-h-full resize-none bg-transparent border-none focus:ring-0 p-4 md:p-8 text-right outline-none text-slate-900 dark:text-slate-50 ${fontClass} prose prose-slate dark:prose-invert max-w-none leading-loose focus:bg-white dark:focus:bg-slate-800 transition-colors duration-300`}
                             style={{ fontSize: `${fontSize}px` }}
                             contentEditable={!isTranslating}
                             suppressContentEditableWarning

@@ -3,6 +3,7 @@ import { Upload, Book, Play, Pause, Download, AlertCircle, Save, FolderOpen, Ima
 import { AppState, ProjectData, Segment, SegmentStatus, SystemLogEntry, LogType, LiveLogItem, AIDebugLogEntry, ExportSettings, ArchitectAnalysisResult } from './types';
 import { dbService } from './services/db';
 import { epubService } from './services/epubService';
+import { EpubProcessor } from './services/architectService';
 import { geminiService } from './services/geminiService';
 import { backupService } from './services/backupService';
 import { useTranslationProcessor } from './hooks/useTranslationProcessor';
@@ -72,6 +73,7 @@ const App = () => {
   });
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const processorRef = useRef<EpubProcessor | null>(null);
 
   // --- LOGGING ---
   const addLog = useCallback((message: string, type: LogType = 'INFO') => {
@@ -428,75 +430,63 @@ const App = () => {
   const skippedCount = segments.filter(s => s.status === SegmentStatus.SKIPPED).length;
 
   const handleAnalyzeEpub = async () => {
+    if (!project) return;
     setIsAnalyzing(true);
-    // Simulate analysis delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
     
-    setArchitectResult({
-      metadata: {
-        title: project?.title || 'Unknown',
-        creator: project?.author || 'Unknown',
-        language: 'en',
-        identifier: 'urn:uuid:12345'
-      },
-      issues: [
-        {
-          id: '1',
-          type: 'WARNING',
-          category: 'CSS',
-          description: 'Hardcoded text alignment found in CSS',
-          recommendation: 'Standardize CSS to allow global text direction control.',
-          autoFixable: true
-        },
-        {
-          id: '2',
-          type: 'INFO',
-          category: 'STRUCTURE',
-          description: 'Missing semantic HTML5 tags',
-          recommendation: 'Wrap content in <section> and <article> tags for better compatibility.',
-          autoFixable: true
-        }
-      ],
-      manifestCount: 24,
-      cssFileCount: 2,
-      originalSize: project?.sourceEpubBlob.size || 0,
-      detectedLanguage: 'English',
-      isRTL: false,
-      bookPersonality: 'Modern Non-Fiction',
-      tocStatus: {
-        exists: true,
-        path: 'toc.ncx',
-        brokenLinks: 0,
-        type: 'NCX'
-      },
-      fontRecommendations: [],
-      typographyProfile: {
-        themeName: 'Default',
-        lineHeight: '1.6',
-        paragraphSpacing: '1em',
-        headingTopMargin: '2em',
-        headingBottomMargin: '1em',
-        maxWidth: '100%',
-        baseFontSize: '1em'
+    try {
+      if (!processorRef.current) {
+        processorRef.current = new EpubProcessor((log) => {
+          addLog(`[Architect] ${log.message}`, log.type === 'error' ? 'ERROR' : log.type === 'success' ? 'SUCCESS' : 'INFO');
+        });
       }
-    });
-    setIsAnalyzing(false);
+      
+      await processorRef.current.loadFile(project.sourceEpubBlob, project.title);
+      const result = await processorRef.current.analyze(project.title, segments);
+      setArchitectResult(result);
+    } catch (e) {
+      console.error(e);
+      addLog(`Architect Analysis Failed: ${(e as Error).message}`, 'ERROR');
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const handleRepairEpub = async () => {
-    // Mock repair
+    if (!processorRef.current || !architectResult || !project) return;
     setIsAnalyzing(true);
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    setArchitectResult(null);
-    setIsAnalyzing(false);
-    setIsEditModalOpen(false);
-    // You could add a toast notification here
+    
+    try {
+      const actions = {
+        fixMetadata: true,
+        standardizeCSS: true,
+        fixStructure: true,
+        addMissingTags: true,
+        fixTOC: true,
+        embedFonts: true,
+      };
+
+      const fixedBlob = await processorRef.current.repair(actions, architectResult.isRTL);
+      
+      // Update the project with the new blob
+      const updatedProject = { ...project, sourceEpubBlob: fixedBlob };
+      await dbService.saveProject(updatedProject);
+      setProject(updatedProject);
+      
+      addLog("EPUB successfully repaired and updated in project.", 'SUCCESS');
+      setArchitectResult(null);
+      setIsEditModalOpen(false);
+    } catch (e) {
+      console.error(e);
+      addLog(`Architect Repair Failed: ${(e as Error).message}`, 'ERROR');
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   return (
       <div className="h-screen flex bg-slate-50 dark:bg-slate-900 overflow-hidden font-sans transition-colors duration-200">
           {/* Sidebar */}
-          <aside className={`${isSidebarOpen ? 'w-80' : 'w-20'} bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col z-20 shadow-sm transition-all duration-300 shrink-0`}>
+          <aside className={`${isSidebarOpen ? 'w-80 absolute md:relative' : 'w-0 md:w-20'} h-full bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col z-50 shadow-sm transition-all duration-300 shrink-0 overflow-hidden`}>
               <div className={`h-14 flex items-center border-b border-slate-100 dark:border-slate-700 shrink-0 relative ${isSidebarOpen ? 'px-6 justify-between' : 'px-0 justify-center'}`}>
                    {isSidebarOpen && (
                        <div className="flex items-center gap-3">
@@ -654,25 +644,41 @@ const App = () => {
               </div>
           </aside>
 
+          {/* Mobile Sidebar Overlay */}
+          {isSidebarOpen && (
+              <div 
+                  className="fixed inset-0 bg-slate-900/50 z-40 md:hidden backdrop-blur-sm"
+                  onClick={() => setIsSidebarOpen(false)}
+              />
+          )}
+
           {/* Main Content */}
           <main className="flex-1 flex flex-col min-w-0 h-full relative bg-slate-50 dark:bg-slate-900 transition-colors duration-200">
               {/* Header */}
-              <header className="h-14 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-6 shrink-0 z-10 transition-colors duration-200">
-                   <div className="flex items-center gap-4">
+              <header className="h-14 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-4 md:px-6 shrink-0 z-10 transition-colors duration-200">
+                   <div className="flex items-center gap-2 md:gap-4">
+                       {!isSidebarOpen && (
+                           <button 
+                               onClick={() => setIsSidebarOpen(true)}
+                               className="md:hidden p-1.5 -ml-2 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800"
+                           >
+                               <PanelLeftOpen className="w-5 h-5" />
+                           </button>
+                       )}
                        <div className="flex items-center gap-2">
-                           <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">Segment</span>
+                           <span className="hidden md:inline text-sm font-semibold text-slate-500 dark:text-slate-400">Segment</span>
                            <div className="flex items-center bg-slate-100 dark:bg-slate-900 rounded-md p-1 border border-slate-200 dark:border-slate-700">
                                <button disabled={activeSegmentIndex <= 0} onClick={() => setActiveSegmentIndex(i => i - 1)} className="p-1 hover:bg-white dark:hover:bg-slate-800 rounded text-slate-600 dark:text-slate-300 disabled:opacity-50 transition-colors"><ChevronLeft className="w-4 h-4"/></button>
-                               <span className="w-16 text-center text-xs font-mono text-slate-700 dark:text-slate-300">{activeSegmentIndex + 1} / {segments.length}</span>
+                               <span className="w-12 md:w-16 text-center text-xs font-mono text-slate-700 dark:text-slate-300">{activeSegmentIndex + 1} / {segments.length}</span>
                                <button disabled={activeSegmentIndex >= segments.length - 1} onClick={() => setActiveSegmentIndex(i => i + 1)} className="p-1 hover:bg-white dark:hover:bg-slate-800 rounded text-slate-600 dark:text-slate-300 disabled:opacity-50 transition-colors"><ChevronRight className="w-4 h-4"/></button>
                            </div>
                        </div>
-                       {activeSegment && <Badge status={activeSegment.status} />}
+                       {activeSegment && <Badge status={activeSegment.status} className="hidden sm:inline-flex" />}
                    </div>
 
-                   <div className="flex items-center gap-3">
+                   <div className="flex items-center gap-1 md:gap-3">
                        {/* Font Controls */}
-                       <div className="flex items-center bg-slate-100 dark:bg-slate-900 rounded-md p-1 mr-2 border border-slate-200 dark:border-slate-700">
+                       <div className="hidden md:flex items-center bg-slate-100 dark:bg-slate-900 rounded-md p-1 mr-2 border border-slate-200 dark:border-slate-700">
                            <button 
                                 onClick={() => setFontType(t => t === 'serif' ? 'sans' : 'serif')} 
                                 className="p-1.5 hover:bg-white dark:hover:bg-slate-800 rounded text-slate-600 dark:text-slate-300 transition-colors"
@@ -691,9 +697,9 @@ const App = () => {
                        </button>
 
                         {/* Export Controls */}
-                       <div className="flex items-center gap-1 ml-2">
-                            <Button variant="primary" size="sm" onClick={handleExport} disabled={appState === AppState.TRANSLATING}>
-                                <Download className="w-4 h-4 mr-2" /> Export EPUB
+                       <div className="flex items-center gap-1 ml-1 md:ml-2">
+                            <Button variant="primary" size="sm" onClick={handleExport} disabled={appState === AppState.TRANSLATING} className="px-2 md:px-4">
+                                <Download className="w-4 h-4 md:mr-2" /> <span className="hidden md:inline">Export EPUB</span>
                             </Button>
                        </div>
                    </div>
@@ -702,7 +708,7 @@ const App = () => {
               {/* Translation Workspace & Log Container */}
               <div className="flex-1 flex flex-col min-h-0 bg-slate-50 dark:bg-slate-900">
                   {/* Split View Area */}
-                  <div className="flex-1 overflow-hidden p-6 pb-2">
+                  <div className="flex-1 overflow-hidden p-2 md:p-6 md:pb-2">
                       <div className="w-full h-full">
                           {activeSegment ? (
                               <SplitView 
@@ -733,8 +739,13 @@ const App = () => {
           </main>
 
           {/* Project Settings Modal */}
-          <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} title="Project Settings">
-              <div className="flex border-b border-slate-200 dark:border-slate-700 mb-4">
+          <Modal 
+              isOpen={isEditModalOpen} 
+              onClose={() => setIsEditModalOpen(false)} 
+              title="Project Settings"
+              maxWidth={settingsTab === 'architect' ? 'max-w-4xl' : 'max-w-lg'}
+          >
+              <div className="flex border-b border-slate-200 dark:border-slate-700 mb-4 shrink-0">
                   <button
                       className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${settingsTab === 'general' ? 'border-sky-500 text-sky-600 dark:text-sky-400' : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
                       onClick={() => setSettingsTab('general')}
@@ -858,7 +869,7 @@ const App = () => {
               )}
 
               {settingsTab === 'architect' && (
-                  <div className="space-y-4">
+                  <>
                       {!architectResult ? (
                           <div className="flex flex-col items-center justify-center py-12 text-center">
                               <div className="w-16 h-16 bg-sky-100 dark:bg-sky-900/30 rounded-full flex items-center justify-center mb-4">
@@ -884,10 +895,11 @@ const App = () => {
                           <AnalysisReport 
                               result={architectResult} 
                               onRepair={handleRepairEpub} 
-                              onCancel={() => setArchitectResult(null)} 
+                              onCancel={() => setArchitectResult(null)}
+                              isRepairing={isAnalyzing}
                           />
                       )}
-                  </div>
+                  </>
               )}
           </Modal>
       </div>

@@ -51,7 +51,7 @@ export const useTranslationProcessor = (
         processingRef.current = true;
         addLog("Processor started.", 'INFO');
 
-        const CONCURRENCY = 3;
+        const CONCURRENCY = 5;
         let activeWorkers = 0;
         let isQuotaHit = false;
 
