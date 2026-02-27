@@ -113,6 +113,12 @@ const App = () => {
                   setExportSettings(proj.exportSettings);
               }
 
+              // Reset any segments stuck in TRANSLATING state
+              const resetCount = await dbService.resetTranslatingSegments();
+              if (resetCount > 0) {
+                  addLog(`Reset ${resetCount} stuck translating segments.`, 'INFO');
+              }
+
               const segs = await dbService.getAllSegments();
               segmentsRef.current = segs;
               setSegments(segs);
@@ -320,12 +326,27 @@ const App = () => {
       addAiLog
   );
 
-  const togglePlayPause = useCallback(() => {
-      setAppState(curr => curr === AppState.TRANSLATING ? AppState.PAUSED : AppState.TRANSLATING);
-  }, []);
+  const togglePlayPause = useCallback(async () => {
+      if (appState === AppState.TRANSLATING) {
+          setAppState(AppState.PAUSED);
+      } else {
+          const resetCount = await dbService.resetTranslatingSegments();
+          if (resetCount > 0) {
+              addLog(`Reset ${resetCount} stuck translating segments.`, 'INFO');
+              const updated = await dbService.getAllSegments();
+              segmentsRef.current = updated;
+              setSegments(updated);
+          }
+          setAppState(AppState.TRANSLATING);
+      }
+  }, [appState, addLog]);
 
   const retrySkipped = async () => {
       await dbService.retrySkippedSegments();
+      const resetCount = await dbService.resetTranslatingSegments();
+      if (resetCount > 0) {
+          addLog(`Reset ${resetCount} stuck translating segments.`, 'INFO');
+      }
       const updated = await dbService.getAllSegments();
       segmentsRef.current = updated;
       setSegments(updated);

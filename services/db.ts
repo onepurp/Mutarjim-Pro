@@ -126,6 +126,22 @@ export const dbService = {
     return { total, translated, failed };
   },
 
+  async resetTranslatingSegments(): Promise<number> {
+    const db = await getDB();
+    const tx = db.transaction('segments', 'readwrite');
+    const index = tx.store.index('by-status');
+    
+    const translatingSegments = await index.getAll(SegmentStatus.TRANSLATING);
+    
+    for (const segment of translatingSegments) {
+        segment.status = SegmentStatus.PENDING;
+        await tx.store.put(segment);
+    }
+    
+    await tx.done;
+    return translatingSegments.length;
+  },
+
   async retrySkippedSegments(): Promise<number> {
     const db = await getDB();
     const tx = db.transaction('segments', 'readwrite');
