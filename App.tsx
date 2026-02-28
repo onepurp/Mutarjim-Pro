@@ -279,6 +279,7 @@ const App = () => {
       if (!project) return;
       setEditArabicTitle(project.arabicTitle || '');
       setEditExportSettings(project.exportSettings || { textAlignment: 'right', forceAlignment: false });
+      setSettingsTab('general');
       setIsEditModalOpen(true);
   };
 
@@ -326,7 +327,8 @@ const App = () => {
       setProject,
       setActiveSegmentIndex,
       addLog,
-      addAiLog
+      addAiLog,
+      project?.exportSettings?.translationMode || 'normal'
   );
 
   const togglePlayPause = useCallback(async () => {
@@ -790,6 +792,37 @@ const App = () => {
                             </Button>
                           </div>
                           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">This title will be used inside the EPUB and for the filename.</p>
+                      </div>
+
+                      {/* Translation Mode Section */}
+                      <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-700">
+                          <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Translation Mode</h4>
+                          <div className="space-y-2">
+                              <Label>Select Mode</Label>
+                              <div className="flex gap-2">
+                                  <Button 
+                                      variant={(!editExportSettings.translationMode || editExportSettings.translationMode === 'normal') ? 'primary' : 'outline'} 
+                                      onClick={() => setEditExportSettings(s => ({...s, translationMode: 'normal'}))}
+                                      className="flex-1"
+                                      title="Normal Mode"
+                                      type="button"
+                                  >
+                                      Normal
+                                  </Button>
+                                  <Button 
+                                      variant={editExportSettings.translationMode === 'second_mode' ? 'primary' : 'outline'} 
+                                      onClick={() => setEditExportSettings(s => ({...s, translationMode: 'second_mode'}))}
+                                      className="flex-1"
+                                      title="Second Mode"
+                                      type="button"
+                                  >
+                                      Second Mode
+                                  </Button>
+                              </div>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                                  Choose the translation mode. Normal mode uses standard settings, while Second Mode uses alternative prompts and models.
+                              </p>
+                          </div>
                       </div>
 
                       {/* HTML Alignment Options */}

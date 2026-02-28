@@ -22,14 +22,14 @@ this is the most important and dangerous thing for me.
 type LoggerCallback = (msg: string, type: LogType, data?: any) => void;
 
 export const geminiService = {
-  async translateHtml(html: string, onLog?: LoggerCallback): Promise<string> {
+  async translateHtml(html: string, onLog?: LoggerCallback, mode: 'normal' | 'second_mode' = 'normal'): Promise<string> {
     if (!process.env.GEMINI_API_KEY) {
       throw new Error("API Key is missing.");
     }
 
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     
-    // Configure safety settings to be maximally permissive for literary fiction
+    // Safety settings
     const safetySettings = [
       { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
       { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -38,13 +38,40 @@ export const geminiService = {
       { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE }
     ];
 
-    // Fallback strategy: Try Flash model first, then Pro if Flash is too strict/busy
-    const modelsToTry = ['gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-3-pro-preview', 'gemini-3.1-pro-preview'];
+    // --- SECOND MODE CONFIGURATION ---
+    // Make your changes here for the second mode:
+    const SECOND_MODE_SYSTEM_INSTRUCTION = `You are a specialist Arabic literary translator and editor working for a prestigious publishing house.
+Your task is to translate the provided HTML content into professional, native-level Arabic, strictly preserving the HTML structure.
+
+IMPORTANT CONTEXT:
+- The source text is from a fictional literary work (novel).
+- It includes dialogue, dramatic situations, and may contain mature themes, violence, or sensitive topics typical of fiction.
+- Your goal is to translate FAITHFULLY and ACCURATELY. 
+- Do NOT censor, sanitize, or summarize. Do NOT refuse to translate based on the fictional characters' actions or dialogue.
+- Preserve the original tone, style, and meaning of the narrative.
+
+Rules:
+1. Translate the inner text of tags into literary Arabic. Match the tone of the source.
+2. Preserve all tags exactly. Do not add new tags. Do not delete, change or reorder any HTML tags.
+3. Do not change the nesting of tags. Do not translate class names, IDs or attributes.
+4. Output only the HTML. Do not wrap it in Markdown code blocks.
+5. If the text contains technical terms, keep them in English if appropriate or provide a standard Arabic equivalent.
+6. Preserve all numeric values.`; 
+    const SECOND_MODE_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite']; 
+    const SECOND_MODE_TEMPERATURE = 1; 
+    // ---------------------------------
+
+    const activeSystemInstruction = mode === 'second_mode' ? SECOND_MODE_SYSTEM_INSTRUCTION : SYSTEM_INSTRUCTION;
+    const activeTemperature = mode === 'second_mode' ? SECOND_MODE_TEMPERATURE : 0.3;
+    const modelsToTry = mode === 'second_mode' 
+      ? SECOND_MODE_MODELS 
+      : ['gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-3-pro-preview', 'gemini-3.1-pro-preview'];
+
     let lastError: Error | null = null;
 
     for (const model of modelsToTry) {
         try {
-            onLog?.(`Attempting translation with ${model}...`, 'INFO', { 
+            onLog?.(`Attempting translation with ${model} (Mode: ${mode})...`, 'INFO', { 
                 inputLength: html.length,
                 model
             });
@@ -55,8 +82,8 @@ export const geminiService = {
                 model: model,
                 contents: { parts: [{ text: html }] },
                 config: {
-                    systemInstruction: SYSTEM_INSTRUCTION,
-                    temperature: 0.3, // Slightly higher for literary creativity
+                    systemInstruction: activeSystemInstruction,
+                    temperature: activeTemperature,
                     safetySettings: safetySettings,
                 }
             });

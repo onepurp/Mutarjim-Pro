@@ -42,7 +42,8 @@ export const useTranslationProcessor = (
     setProject: React.Dispatch<React.SetStateAction<ProjectData | null>>,
     setActiveSegmentIndex: React.Dispatch<React.SetStateAction<number>>,
     addLog: (msg: string, type?: LogType) => void,
-    addAiLog: (msg: string, type?: LogType, data?: any) => void
+    addAiLog: (msg: string, type?: LogType, data?: any) => void,
+    translationMode: 'normal' | 'second_mode' = 'normal'
 ) => {
     const processingRef = useRef<boolean>(false);
     const runTokenRef = useRef<number>(0);
@@ -75,7 +76,7 @@ export const useTranslationProcessor = (
                 }
 
                 try {
-                    const translatedHtml = await geminiService.translateHtml(segment.originalHtml, (msg, type, data) => addAiLog(msg, type, data));
+                    const translatedHtml = await geminiService.translateHtml(segment.originalHtml, (msg, type, data) => addAiLog(msg, type, data), translationMode);
                     
                     segment.translatedHtml = translatedHtml;
                     segment.status = SegmentStatus.TRANSLATED;
@@ -147,7 +148,7 @@ export const useTranslationProcessor = (
         for (let i = 0; i < CONCURRENCY; i++) {
             worker();
         }
-    }, [addLog, addAiLog, setAppState, setProject, setActiveSegmentIndex, segmentsRef]);
+    }, [addLog, addAiLog, setAppState, setProject, setActiveSegmentIndex, segmentsRef, translationMode]);
 
     useEffect(() => {
         if (appState === AppState.TRANSLATING) {

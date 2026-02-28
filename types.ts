@@ -31,6 +31,10 @@ export interface Segment {
 export interface ExportSettings {
   textAlignment: 'right' | 'center' | 'left' | 'justify';
   forceAlignment: boolean; // If true, uses !important to override original styles
+  translationMode?: 'normal' | 'second_mode';
+  customSystemPrompt?: string;
+  customModels?: string;
+  customTemperature?: number;
 }
 
 export interface ProjectData {
