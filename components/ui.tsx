@@ -611,7 +611,7 @@ export const SplitView = React.memo(({ original, translated, onTranslatedChange,
                             contentEditable={!isTranslating}
                             suppressContentEditableWarning
                             onBlur={(e) => onTranslatedChange(e.currentTarget.innerHTML)}
-                            dangerouslySetInnerHTML={{ __html: translated || '' }}
+                            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(translated || '') }}
                             dir="rtl"
                         />
                     </div>

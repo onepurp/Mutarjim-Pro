@@ -23,11 +23,11 @@ type LoggerCallback = (msg: string, type: LogType, data?: any) => void;
 
 export const geminiService = {
   async translateHtml(html: string, onLog?: LoggerCallback): Promise<string> {
-    if (!process.env.API_KEY) {
+    if (!process.env.GEMINI_API_KEY) {
       throw new Error("API Key is missing.");
     }
 
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     
     // Configure safety settings to be maximally permissive for literary fiction
     const safetySettings = [
@@ -38,8 +38,8 @@ export const geminiService = {
       { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE }
     ];
 
-    // Fallback strategy: Try Pr o model first, then Flash if Pro is too strict/busy
-    const modelsToTry = ['gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-3-pro-preview'];
+    // Fallback strategy: Try Flash model first, then Pro if Flash is too strict/busy
+    const modelsToTry = ['gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-3-pro-preview', 'gemini-3.1-pro-preview'];
     let lastError: Error | null = null;
 
     for (const model of modelsToTry) {
@@ -98,9 +98,9 @@ export const geminiService = {
   },
 
   async translateTitle(title: string): Promise<string> {
-    if (!process.env.API_KEY) throw new Error("API Key is missing.");
+    if (!process.env.GEMINI_API_KEY) throw new Error("API Key is missing.");
 
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: { parts: [{ text: `Translate this book title into Arabic. Return ONLY the Arabic title, no other text. Title: "${title}"` }] },

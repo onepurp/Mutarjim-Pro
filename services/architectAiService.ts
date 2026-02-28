@@ -16,7 +16,7 @@ export const analyzeEpubStructure = async (
   fileName: string
 ): Promise<ArchitectAnalysisResult> => {
   const model = "gemini-3.1-pro-preview"; 
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
   const prompt = `
   Analyze the provided 'content.opf', CSS sample, and HTML text sample.
@@ -177,7 +177,7 @@ export const generateStandardizedCSS = async (
     typographyProfile?: TypographyProfile
 ): Promise<string> => {
     const model = "gemini-3.1-pro-preview"; 
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
     
     let prompt = `Refactor the following CSS for an EPUB to be strictly EPUB3 compliant and visually enhanced.
             
@@ -232,7 +232,7 @@ export const generateStandardizedCSS = async (
 
 export const standardizeNavDoc = async (navContent: string, isRTL: boolean): Promise<string> => {
   const model = "gemini-3.1-pro-preview";
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
   try {
     const response = await ai.models.generateContent({
       model,

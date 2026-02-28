@@ -195,7 +195,9 @@ export const epubService = {
        }
     };
 
-    Array.from(doc.body.childNodes).forEach(traverse);
+    if (doc.body) {
+        Array.from(doc.body.childNodes).forEach(traverse);
+    }
     flushBatch();
 
     return segments;
@@ -205,7 +207,10 @@ export const epubService = {
   segmentHtmlLegacy(html: string, fileHref: string): Segment[] {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'application/xhtml+xml');
-    return this.segmentHtmlRecursiveLegacy(doc.body, fileHref);
+    if (doc.body) {
+        return this.segmentHtmlRecursiveLegacy(doc.body, fileHref);
+    }
+    return [];
   },
 
   segmentHtmlRecursiveLegacy(root: Element, fileHref: string): Segment[] {
@@ -296,9 +301,13 @@ export const epubService = {
       const doc = parser.parseFromString(content, 'application/xhtml+xml');
       
       // 1. Basic RTL attributes (Standard for Arabic)
-      doc.body.setAttribute('dir', 'rtl');
-      doc.body.setAttribute('lang', 'ar');
-      doc.documentElement.setAttribute('lang', 'ar');
+      if (doc.body) {
+          doc.body.setAttribute('dir', 'rtl');
+          doc.body.setAttribute('lang', 'ar');
+      }
+      if (doc.documentElement) {
+          doc.documentElement.setAttribute('lang', 'ar');
+      }
 
       // 2. Generate CSS based on alignment settings
       const alignVal = settings.textAlignment;
@@ -491,10 +500,12 @@ export const epubService = {
       };
 
       // Execute Logic based on version
-      if (isV2) {
-          Array.from(doc.body.childNodes).forEach(traverseV2);
-      } else {
-          Array.from(doc.body.children).forEach(traverseLegacy);
+      if (doc.body) {
+          if (isV2) {
+              Array.from(doc.body.childNodes).forEach(traverseV2);
+          } else {
+              Array.from(doc.body.children).forEach(traverseLegacy);
+          }
       }
       processBatch(); 
 

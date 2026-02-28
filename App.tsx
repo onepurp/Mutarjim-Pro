@@ -175,6 +175,7 @@ const App = () => {
           setAppState(AppState.ERROR);
       } finally {
           setLoadingMsg(null);
+          setFileInputKey(k => k + 1);
       }
   };
 
@@ -339,6 +340,8 @@ const App = () => {
               segmentsRef.current = updated;
               setSegments(updated);
           }
+          const proj = await dbService.getProject();
+          setProject(proj);
           setAppState(AppState.TRANSLATING);
       }
   }, [appState, addLog]);
@@ -352,6 +355,8 @@ const App = () => {
       const updated = await dbService.getAllSegments();
       segmentsRef.current = updated;
       setSegments(updated);
+      const proj = await dbService.getProject();
+      setProject(proj);
       addLog("Retrying skipped segments...", 'INFO');
       setAppState(AppState.TRANSLATING);
   };
@@ -397,14 +402,14 @@ const App = () => {
                                <label className="relative flex items-center justify-center gap-3 w-full bg-white dark:bg-slate-800 hover:bg-sky-50 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-50 font-semibold h-14 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer transition-all shadow-sm">
                                    <Upload className="w-5 h-5 text-sky-500" />
                                    <span>Open EPUB File</span>
-                                   <input type="file" className="hidden" accept=".epub" onChange={handleFileUpload} />
+                                   <input key={`epub-${fileInputKey}`} type="file" className="hidden" accept=".epub" onChange={handleFileUpload} />
                                </label>
                            </div>
                            
                            <label className="flex items-center justify-center gap-2 h-12 rounded-lg border border-slate-200 dark:border-slate-800 bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 font-medium cursor-pointer transition-colors">
                                <FolderOpen className="w-4 h-4" />
                                <span>Restore Backup (.mtj)</span>
-                               <input key={fileInputKey} type="file" className="hidden" accept=".mtj" onChange={handleRestoreBackup} />
+                               <input key={`mtj-${fileInputKey}`} type="file" className="hidden" accept=".mtj" onChange={handleRestoreBackup} />
                            </label>
                        </div>
                   </div>

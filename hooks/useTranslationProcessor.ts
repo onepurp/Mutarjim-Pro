@@ -45,10 +45,13 @@ export const useTranslationProcessor = (
     addAiLog: (msg: string, type?: LogType, data?: any) => void
 ) => {
     const processingRef = useRef<boolean>(false);
+    const runTokenRef = useRef<number>(0);
 
     const processQueue = useCallback(async () => {
         if (processingRef.current) return;
         processingRef.current = true;
+        runTokenRef.current += 1;
+        const currentRunToken = runTokenRef.current;
         addLog("Processor started.", 'INFO');
 
         const CONCURRENCY = 5;
@@ -57,7 +60,7 @@ export const useTranslationProcessor = (
 
         const worker = async () => {
             activeWorkers++;
-            while (processingRef.current && !isQuotaHit) {
+            while (processingRef.current && runTokenRef.current === currentRunToken && !isQuotaHit) {
                 const segment = await dbService.getAndMarkPendingSegment();
                 
                 if (!segment) {
@@ -119,13 +122,15 @@ export const useTranslationProcessor = (
                     if (segIndex !== -1) {
                         segmentsRef.current[segIndex] = segment;
                     }
+                } finally {
+                    // Ensure UI updates when a segment finishes, even if paused
+                    setSegments([...segmentsRef.current]);
                 }
             }
             activeWorkers--;
             
             if (activeWorkers === 0) {
-                processingRef.current = false;
-                if (!isQuotaHit) {
+                if (!isQuotaHit && processingRef.current && runTokenRef.current === currentRunToken) {
                     const stats = await dbService.getStats();
                     if (stats.translated === stats.total && stats.total > 0) {
                         setAppState(AppState.COMPLETED);
@@ -134,6 +139,7 @@ export const useTranslationProcessor = (
                         setAppState(AppState.IDLE);
                     }
                 }
+                processingRef.current = false;
             }
         };
 
