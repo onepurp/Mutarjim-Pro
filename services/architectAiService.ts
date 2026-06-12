@@ -16,7 +16,7 @@ export const analyzeEpubStructure = async (
   htmlSample: string,
   fileName: string
 ): Promise<ArchitectAnalysisResult> => {
-  const model = "gemini-3.1-pro-preview"; 
+  const model = "gemini-3.5-flash"; 
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
   const prompt = `
@@ -117,7 +117,7 @@ export const analyzeEpubStructure = async (
           }
         }
       }),
-      { timeoutMs: 60000, retries: 2 }
+      { timeoutMs: 120000, retries: 2, delayMs: 2000 }
     );
 
     if (!response.text) throw new Error("Empty response from AI");
@@ -180,7 +180,7 @@ export const generateStandardizedCSS = async (
     fontMap?: Record<string, string>, // maps role (body, heading) to Font Family Name
     typographyProfile?: TypographyProfile
 ): Promise<string> => {
-    const model = "gemini-3.1-pro-preview"; 
+    const model = "gemini-3.5-flash"; 
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
     
     let prompt = `Refactor the following CSS for an EPUB to be strictly EPUB3 compliant and visually enhanced.
@@ -228,7 +228,7 @@ export const generateStandardizedCSS = async (
                 model,
                 contents: prompt
             }),
-            { timeoutMs: 45000, retries: 2 }
+            { timeoutMs: 120000, retries: 2, delayMs: 3000 }
         );
         return response.text || originalCSS;
     } catch (e) {
@@ -238,7 +238,7 @@ export const generateStandardizedCSS = async (
 }
 
 export const standardizeNavDoc = async (navContent: string, isRTL: boolean): Promise<string> => {
-  const model = "gemini-3.1-pro-preview";
+  const model = "gemini-3.5-flash";
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
   try {
     const response = await callWithRetryAndTimeout(
@@ -254,7 +254,7 @@ export const standardizeNavDoc = async (navContent: string, isRTL: boolean): Pro
         Input:
         ${navContent.substring(0, 15000)}`
       }),
-      { timeoutMs: 30000, retries: 2 }
+      { timeoutMs: 60000, retries: 2, delayMs: 2000 }
     );
     return response.text || navContent;
   } catch (e) {
