@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { LogType } from '../types';
 
@@ -59,7 +60,7 @@ Rules:
 5. If the text contains technical terms, keep them in English if appropriate or provide a standard Arabic equivalent.
 6. Preserve all numeric values.`; 
     // const SECOND_MODE_MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite']; 
-    const SECOND_MODE_MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite']; 
+    const SECOND_MODE_MODELS = ['gemini-3-flash-preview', 'gemini-2.5-pro']; 
 
     const SECOND_MODE_TEMPERATURE = 1; 
     // ---------------------------------
@@ -142,10 +143,10 @@ Rules:
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const response = await callWithRetryAndTimeout(
         () => ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
+            model: 'gemini-3.5-flash',
             contents: { parts: [{ text: `Translate this book title into Arabic. Return ONLY the Arabic title, no other text. Title: "${title}"` }] },
         }),
-        { timeoutMs: 30000, retries: 2 }
+        { timeoutMs: 30000, retries: 2, delayMs: 2000 }
     );
     
     return response.text?.trim() || "";
