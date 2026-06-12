@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ArchitectAnalysisResult, TypographyProfile } from "../types";
+import { callWithRetryAndTimeout } from "../lib/aiUtils";
 
 // System instruction for the EPUB Expert persona
 const SYSTEM_INSTRUCTION = `
@@ -37,84 +38,87 @@ export const analyzeEpubStructure = async (
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: model,
-      contents: {
-        parts: [
-          { text: prompt },
-          { text: `--- content.opf ---\n${opfContent}` },
-          { text: `--- style.css sample ---\n${cssSample}` },
-          { text: `--- HTML Text Sample ---\n${htmlSample}` }
-        ]
-      },
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            metadata: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING },
-                creator: { type: Type.STRING },
-                language: { type: Type.STRING },
-                identifier: { type: Type.STRING },
-                publisher: { type: Type.STRING },
-                description: { type: Type.STRING },
-              },
-              required: ["title", "creator", "language"],
-            },
-            bookPersonality: { type: Type.STRING },
-            issues: {
-              type: Type.ARRAY,
-              items: {
+    const response = await callWithRetryAndTimeout(
+      () => ai.models.generateContent({
+        model: model,
+        contents: {
+          parts: [
+            { text: prompt },
+            { text: `--- content.opf ---\n${opfContent}` },
+            { text: `--- style.css sample ---\n${cssSample}` },
+            { text: `--- HTML Text Sample ---\n${htmlSample}` }
+          ]
+        },
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              metadata: {
                 type: Type.OBJECT,
                 properties: {
-                  id: { type: Type.STRING },
-                  type: { type: Type.STRING, enum: ["CRITICAL", "WARNING", "INFO"] },
-                  category: { type: Type.STRING, enum: ["METADATA", "STRUCTURE", "CSS", "COMPATIBILITY", "TOC"] },
+                  title: { type: Type.STRING },
+                  creator: { type: Type.STRING },
+                  language: { type: Type.STRING },
+                  identifier: { type: Type.STRING },
+                  publisher: { type: Type.STRING },
                   description: { type: Type.STRING },
-                  recommendation: { type: Type.STRING },
-                  autoFixable: { type: Type.BOOLEAN },
                 },
-                required: ["id", "type", "category", "description", "recommendation", "autoFixable"]
+                required: ["title", "creator", "language"],
               },
-            },
-            isRTL: { type: Type.BOOLEAN },
-            fontRecommendations: {
+              bookPersonality: { type: Type.STRING },
+              issues: {
                 type: Type.ARRAY,
                 items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        role: { type: Type.STRING, enum: ['body', 'heading', 'subheading', 'quote', 'code'] },
-                        fontFamily: { type: Type.STRING },
-                        kebabName: { type: Type.STRING },
-                        category: { type: Type.STRING, enum: ['serif', 'sans-serif', 'display', 'monospace', 'handwriting'] },
-                        subset: { type: Type.STRING },
-                        justification: { type: Type.STRING }
-                    },
-                    required: ['role', 'fontFamily', 'kebabName', 'category', 'subset', 'justification']
-                }
-            },
-            typographyProfile: {
-                type: Type.OBJECT,
-                properties: {
-                    themeName: { type: Type.STRING },
-                    lineHeight: { type: Type.STRING },
-                    paragraphSpacing: { type: Type.STRING },
-                    headingTopMargin: { type: Type.STRING },
-                    headingBottomMargin: { type: Type.STRING },
-                    maxWidth: { type: Type.STRING },
-                    baseFontSize: { type: Type.STRING }
+                  type: Type.OBJECT,
+                  properties: {
+                    id: { type: Type.STRING },
+                    type: { type: Type.STRING, enum: ["CRITICAL", "WARNING", "INFO"] },
+                    category: { type: Type.STRING, enum: ["METADATA", "STRUCTURE", "CSS", "COMPATIBILITY", "TOC"] },
+                    description: { type: Type.STRING },
+                    recommendation: { type: Type.STRING },
+                    autoFixable: { type: Type.BOOLEAN },
+                  },
+                  required: ["id", "type", "category", "description", "recommendation", "autoFixable"]
                 },
-                required: ['themeName', 'lineHeight', 'paragraphSpacing', 'headingTopMargin', 'headingBottomMargin', 'maxWidth', 'baseFontSize']
-            }
-          },
-          required: ["metadata", "issues", "isRTL", "fontRecommendations", "bookPersonality", "typographyProfile"],
+              },
+              isRTL: { type: Type.BOOLEAN },
+              fontRecommendations: {
+                  type: Type.ARRAY,
+                  items: {
+                      type: Type.OBJECT,
+                      properties: {
+                          role: { type: Type.STRING, enum: ['body', 'heading', 'subheading', 'quote', 'code'] },
+                          fontFamily: { type: Type.STRING },
+                          kebabName: { type: Type.STRING },
+                          category: { type: Type.STRING, enum: ['serif', 'sans-serif', 'display', 'monospace', 'handwriting'] },
+                          subset: { type: Type.STRING },
+                          justification: { type: Type.STRING }
+                      },
+                      required: ['role', 'fontFamily', 'kebabName', 'category', 'subset', 'justification']
+                  }
+              },
+              typographyProfile: {
+                  type: Type.OBJECT,
+                  properties: {
+                      themeName: { type: Type.STRING },
+                      lineHeight: { type: Type.STRING },
+                      paragraphSpacing: { type: Type.STRING },
+                      headingTopMargin: { type: Type.STRING },
+                      headingBottomMargin: { type: Type.STRING },
+                      maxWidth: { type: Type.STRING },
+                      baseFontSize: { type: Type.STRING }
+                  },
+                  required: ['themeName', 'lineHeight', 'paragraphSpacing', 'headingTopMargin', 'headingBottomMargin', 'maxWidth', 'baseFontSize']
+              }
+            },
+            required: ["metadata", "issues", "isRTL", "fontRecommendations", "bookPersonality", "typographyProfile"],
+          }
         }
-      }
-    });
+      }),
+      { timeoutMs: 60000, retries: 2 }
+    );
 
     if (!response.text) throw new Error("Empty response from AI");
 
@@ -219,10 +223,13 @@ export const generateStandardizedCSS = async (
             ${originalCSS.substring(0, 15000)}`;
 
     try {
-        const response = await ai.models.generateContent({
-            model,
-            contents: prompt
-        });
+        const response = await callWithRetryAndTimeout(
+            () => ai.models.generateContent({
+                model,
+                contents: prompt
+            }),
+            { timeoutMs: 45000, retries: 2 }
+        );
         return response.text || originalCSS;
     } catch (e) {
         console.error("CSS Generation failed", e);
@@ -234,18 +241,21 @@ export const standardizeNavDoc = async (navContent: string, isRTL: boolean): Pro
   const model = "gemini-3.1-pro-preview";
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
   try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: `Refactor the following EPUB Navigation Document (XHTML).
-      - Ensure <nav epub:type="toc"> exists.
-      - Use ordered list <ol>.
-      - Preserve href attributes exactly.
-      - ${isRTL ? 'Set dir="rtl" on html tag.' : ''}
-      - Return ONLY HTML.
-      
-      Input:
-      ${navContent.substring(0, 15000)}`
-    });
+    const response = await callWithRetryAndTimeout(
+      () => ai.models.generateContent({
+        model,
+        contents: `Refactor the following EPUB Navigation Document (XHTML).
+        - Ensure <nav epub:type="toc"> exists.
+        - Use ordered list <ol>.
+        - Preserve href attributes exactly.
+        - ${isRTL ? 'Set dir="rtl" on html tag.' : ''}
+        - Return ONLY HTML.
+        
+        Input:
+        ${navContent.substring(0, 15000)}`
+      }),
+      { timeoutMs: 30000, retries: 2 }
+    );
     return response.text || navContent;
   } catch (e) {
     return navContent;
