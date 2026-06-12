@@ -1,6 +1,7 @@
-
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { LogType } from '../types';
+
+import { callWithRetryAndTimeout } from '../lib/aiUtils';
 
 const SYSTEM_INSTRUCTION = `You are a specialist Arabic literary translator and editor working for a prestigious publishing house that specialises in English-to-Arabic translation. 
 Your task is to translate the provided HTML content into professional, easy to understand, native-level Arabic, strictly preserving the HTML structure.
@@ -57,7 +58,9 @@ Rules:
 4. Output only the HTML. Do not wrap it in Markdown code blocks.
 5. If the text contains technical terms, keep them in English if appropriate or provide a standard Arabic equivalent.
 6. Preserve all numeric values.`; 
-    const SECOND_MODE_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite']; 
+    // const SECOND_MODE_MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite']; 
+    const SECOND_MODE_MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite']; 
+
     const SECOND_MODE_TEMPERATURE = 1; 
     // ---------------------------------
 
@@ -65,7 +68,7 @@ Rules:
     const activeTemperature = mode === 'second_mode' ? SECOND_MODE_TEMPERATURE : 0.3;
     const modelsToTry = mode === 'second_mode' 
       ? SECOND_MODE_MODELS 
-      : ['gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-3-pro-preview', 'gemini-3.1-pro-preview'];
+      : ['gemini-3.5-flash', 'gemini-3-flash-preview',  'gemini-3-pro-preview', 'gemini-3.1-pro-preview'];
 
     let lastError: Error | null = null;
 
@@ -78,15 +81,24 @@ Rules:
 
             const startTime = Date.now();
 
-            const response = await ai.models.generateContent({
-                model: model,
-                contents: { parts: [{ text: html }] },
-                config: {
-                    systemInstruction: activeSystemInstruction,
-                    temperature: activeTemperature,
-                    safetySettings: safetySettings,
+            const response = await callWithRetryAndTimeout(
+                () => ai.models.generateContent({
+                    model: model,
+                    contents: { parts: [{ text: html }] },
+                    config: {
+                        systemInstruction: activeSystemInstruction,
+                        temperature: activeTemperature,
+                        safetySettings: safetySettings,
+                    }
+                }),
+                {
+                    timeoutMs: 90000, // 90 second timeout for translation
+                    retries: 3,
+                    onRetry: (error, attempt) => {
+                        onLog?.(`Retrying ${model} due to error: ${error.message} (Attempt ${attempt}/3)...`, 'WARNING');
+                    }
                 }
-            });
+            );
 
             const duration = Date.now() - startTime;
             const finishReason = response.candidates?.[0]?.finishReason;
@@ -128,10 +140,13 @@ Rules:
     if (!process.env.GEMINI_API_KEY) throw new Error("API Key is missing.");
 
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: { parts: [{ text: `Translate this book title into Arabic. Return ONLY the Arabic title, no other text. Title: "${title}"` }] },
-    });
+    const response = await callWithRetryAndTimeout(
+        () => ai.models.generateContent({
+            model: 'gemini-3-flash-preview',
+            contents: { parts: [{ text: `Translate this book title into Arabic. Return ONLY the Arabic title, no other text. Title: "${title}"` }] },
+        }),
+        { timeoutMs: 30000, retries: 2 }
+    );
     
     return response.text?.trim() || "";
   },
