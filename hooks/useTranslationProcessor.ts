@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { AppState, Segment, SegmentStatus, LogType, ProjectData } from '../types';
+import React, { useCallback, useRef, useEffect } from 'react';
+import { AppState, Segment, SegmentStatus, LogType, ProjectData, GlossaryTerm } from '../types';
 import { dbService } from '../services/db';
-import { geminiService } from '../services/geminiService';
+import { geminiService, isQuotaError } from '../services/geminiService';
 
 const playRingSound = () => {
     try {
@@ -26,7 +26,6 @@ const playRingSound = () => {
         };
 
         const now = audioCtx.currentTime;
-        // Play a distinctive "ding-dong" alert sound
         playTone(880, now, 0.4); // A5
         playTone(659.25, now + 0.3, 0.6); // E5
     } catch (e) {
@@ -43,10 +42,51 @@ export const useTranslationProcessor = (
     setActiveSegmentIndex: React.Dispatch<React.SetStateAction<number>>,
     addLog: (msg: string, type?: LogType) => void,
     addAiLog: (msg: string, type?: LogType, data?: any) => void,
-    translationMode: 'normal' | 'second_mode' = 'normal'
+    translationMode: 'normal' | 'second_mode' = 'normal',
+    glossaryRef?: React.MutableRefObject<GlossaryTerm[]>,
+    setGlossary?: React.Dispatch<React.SetStateAction<GlossaryTerm[]>>,
+    setIsScanningGlossary?: React.Dispatch<React.SetStateAction<boolean>>
 ) => {
     const processingRef = useRef<boolean>(false);
     const runTokenRef = useRef<number>(0);
+    const discoveryQueueRef = useRef<Array<{ originalHtml: string; translatedHtml: string }>>([]);
+    const isProcessingDiscoveryQueueRef = useRef<boolean>(false);
+
+    const enqueueLiveGlossaryDiscovery = useCallback(
+        (originalHtml: string, translatedHtml: string) => {
+            discoveryQueueRef.current.push({ originalHtml, translatedHtml });
+            if (isProcessingDiscoveryQueueRef.current) return;
+
+            isProcessingDiscoveryQueueRef.current = true;
+            const drainQueue = async () => {
+                while (discoveryQueueRef.current.length > 0 && processingRef.current) {
+                    const item = discoveryQueueRef.current.shift();
+                    if (!item) break;
+
+                    try {
+                        const currentTerms = glossaryRef ? glossaryRef.current : [];
+                        const newTerms = await geminiService.extractNewTermsFromSegment(
+                            item.originalHtml,
+                            item.translatedHtml,
+                            currentTerms,
+                            (msg, type, data) => addAiLog(msg, type, data)
+                        );
+                        if (newTerms.length > 0) {
+                            const merged = await dbService.saveGlossaryTerms(newTerms, false);
+                            if (glossaryRef) glossaryRef.current = merged;
+                            setGlossary?.(merged);
+                        }
+                    } catch {
+                        // Non-blocking background pass
+                    }
+                }
+                isProcessingDiscoveryQueueRef.current = false;
+            };
+
+            drainQueue();
+        },
+        [addAiLog, glossaryRef, setGlossary]
+    );
 
     const processQueue = useCallback(async () => {
         if (processingRef.current) return;
@@ -54,6 +94,53 @@ export const useTranslationProcessor = (
         runTokenRef.current += 1;
         const currentRunToken = runTokenRef.current;
         addLog("Processor started.", 'INFO');
+
+        // Phase A: Automatic Pre-Translation Glossary Extraction (if not yet initialized for this project)
+        try {
+            const currentProj = await dbService.getProject();
+            if (currentProj && !currentProj.glossaryInitialized && segmentsRef.current.length > 0) {
+                setIsScanningGlossary?.(true);
+                addLog("Auto-scanning book to extract names, places, titles, and recurring concepts...", 'INFO');
+                const scanResult = await geminiService.extractInitialBookGlossary(
+                    segmentsRef.current,
+                    currentProj.title,
+                    (msg, type, data) => addAiLog(msg, type, data)
+                );
+
+                if (scanResult.succeeded) {
+                    if (scanResult.terms.length > 0) {
+                        const updatedGlossary = await dbService.saveGlossaryTerms(scanResult.terms, false);
+                        if (glossaryRef) glossaryRef.current = updatedGlossary;
+                        setGlossary?.(updatedGlossary);
+                        addLog(`Book Glossary initialized with ${updatedGlossary.length} recurring terms.`, 'SUCCESS');
+                    } else {
+                        addLog("Initial glossary scan finished.", 'INFO');
+                    }
+
+                    const markedProj: ProjectData = { ...currentProj, glossaryInitialized: true };
+                    await dbService.saveProject(markedProj);
+                    setProject(markedProj);
+                } else if (scanResult.quotaExhausted) {
+                    setAppState(AppState.QUOTA_PAUSED);
+                    addLog("API Quota hit during initial glossary scan. Pausing.", 'WARNING');
+                    playRingSound();
+                    processingRef.current = false;
+                    return;
+                } else {
+                    addLog("Glossary pre-scan could not complete; will retry on next run. Proceeding with translation.", 'WARNING');
+                }
+            }
+        } catch (err) {
+            console.warn("Pre-translation glossary scan encountered an error:", err);
+            addLog("Glossary pre-scan skipped due to error; proceeding with translation.", 'WARNING');
+        } finally {
+            setIsScanningGlossary?.(false);
+        }
+
+        if (!processingRef.current || runTokenRef.current !== currentRunToken) {
+            processingRef.current = false;
+            return;
+        }
 
         const CONCURRENCY = 5;
         let activeWorkers = 0;
@@ -72,11 +159,22 @@ export const useTranslationProcessor = (
                 const segIndex = segmentsRef.current.findIndex(s => s.id === segment.id);
                 if (segIndex !== -1) {
                     segmentsRef.current[segIndex] = { ...segment, status: SegmentStatus.TRANSLATING };
-                    setActiveSegmentIndex(segIndex); // Focus on one of the active ones
+                    setActiveSegmentIndex(segIndex);
                 }
 
                 try {
-                    const translatedHtml = await geminiService.translateHtml(segment.originalHtml, (msg, type, data) => addAiLog(msg, type, data), translationMode);
+                    const activeGlossary = glossaryRef ? glossaryRef.current : [];
+                    const matchedTerms = geminiService.matchGlossaryTermsForHtml(
+                        segment.originalHtml,
+                        activeGlossary
+                    );
+
+                    const translatedHtml = await geminiService.translateHtml(
+                        segment.originalHtml,
+                        (msg, type, data) => addAiLog(msg, type, data),
+                        translationMode,
+                        matchedTerms
+                    );
                     
                     segment.translatedHtml = translatedHtml;
                     segment.status = SegmentStatus.TRANSLATED;
@@ -89,13 +187,17 @@ export const useTranslationProcessor = (
                     
                     setProject(prev => prev ? ({ ...prev, translatedSegments: prev.translatedSegments + 1 }) : null);
 
+                    // Phase B: Enqueue every translated segment for background term discovery via gemini-flash-lite-latest
+                    enqueueLiveGlossaryDiscovery(segment.originalHtml, translatedHtml);
+
                 } catch (e: unknown) {
                     const err = e as any;
-                    const isQuota = err.message?.includes('429') || err.status === 429;
+                    const isQuota = isQuotaError(err);
                     
                     if (isQuota) {
                         if (!isQuotaHit) {
                             isQuotaHit = true;
+                            discoveryQueueRef.current = [];
                             setAppState(AppState.QUOTA_PAUSED);
                             addLog("API Quota hit. Pausing.", 'WARNING');
                             playRingSound();
@@ -124,7 +226,6 @@ export const useTranslationProcessor = (
                         segmentsRef.current[segIndex] = segment;
                     }
                 } finally {
-                    // Ensure UI updates when a segment finishes, even if paused
                     setSegments([...segmentsRef.current]);
                 }
             }
@@ -148,7 +249,7 @@ export const useTranslationProcessor = (
         for (let i = 0; i < CONCURRENCY; i++) {
             worker();
         }
-    }, [addLog, addAiLog, setAppState, setProject, setActiveSegmentIndex, segmentsRef, translationMode]);
+    }, [addLog, addAiLog, setAppState, setProject, setActiveSegmentIndex, segmentsRef, translationMode, glossaryRef, setGlossary, setIsScanningGlossary, enqueueLiveGlossaryDiscovery]);
 
     useEffect(() => {
         if (appState === AppState.TRANSLATING) {

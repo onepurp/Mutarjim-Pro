@@ -1,4 +1,3 @@
-
 export enum SegmentStatus {
   PENDING = 'PENDING',
   TRANSLATING = 'TRANSLATING',
@@ -10,11 +9,25 @@ export enum SegmentStatus {
 export enum AppState {
   IDLE = 'IDLE',
   ANALYZING = 'ANALYZING',
+  EXTRACTING_GLOSSARY = 'EXTRACTING_GLOSSARY',
   TRANSLATING = 'TRANSLATING',
   PAUSED = 'PAUSED',
   QUOTA_PAUSED = 'QUOTA_PAUSED',
   COMPLETED = 'COMPLETED',
   ERROR = 'ERROR',
+}
+
+export type GlossaryCategory = 'character' | 'location' | 'title' | 'concept';
+export type GlossarySourceType = 'auto-scan' | 'auto-live' | 'manual';
+
+export interface GlossaryTerm {
+  id: string; // Normalized lowercase source term
+  source: string; // Original English term
+  target: string; // Canonical Arabic translation
+  category: GlossaryCategory;
+  notes?: string; // Gender, context, or usage notes
+  sourceType: GlossarySourceType;
+  createdAt: number;
 }
 
 export interface Segment {
@@ -50,6 +63,8 @@ export interface ProjectData {
   createdAt: number;
   schemaVersion?: number; // 1 = legacy (elements only), 2 = v2 (nodes)
   exportSettings?: ExportSettings;
+  glossaryInitialized?: boolean;
+  glossaryAutoLearn?: boolean;
 }
 
 export interface AnalysisResult {

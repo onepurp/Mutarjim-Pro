@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Upload, Book, Play, Pause, Download, AlertCircle, Save, FolderOpen, Image as ImageIcon, Settings, Home, FileText, ChevronRight, ChevronLeft, Edit3, RefreshCw, X, Check, Globe, LogOut, Type, Minus, Plus, AlignLeft, AlignCenter, AlignRight, AlignJustify, Layout, Wand2, Moon, Sun, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import { AppState, ProjectData, Segment, SegmentStatus, SystemLogEntry, LogType, LiveLogItem, AIDebugLogEntry, ExportSettings, ArchitectAnalysisResult } from './types';
+import { Upload, Book, BookOpen, Play, Pause, Download, Save, FolderOpen, Image as ImageIcon, ChevronRight, ChevronLeft, RefreshCw, Globe, LogOut, Type, Minus, Plus, AlignLeft, AlignCenter, AlignRight, AlignJustify, Wand2, Moon, Sun, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { AppState, ProjectData, Segment, SegmentStatus, SystemLogEntry, LogType, AIDebugLogEntry, ExportSettings, ArchitectAnalysisResult, GlossaryTerm } from './types';
 import { dbService } from './services/db';
 import { epubService } from './services/epubService';
 import { EpubProcessor } from './services/architectService';
 import { geminiService } from './services/geminiService';
 import { backupService } from './services/backupService';
 import { useTranslationProcessor } from './hooks/useTranslationProcessor';
-import { Button, Card, ProgressBar, Badge, Spinner, SegmentMap, Console, Modal, Input, Label, SplitView } from './components/ui';
+import { Button, ProgressBar, Badge, Spinner, SegmentMap, Console, Modal, Input, Label, SplitView } from './components/ui';
 import { AnalysisReport } from './components/AnalysisReport';
+import { GlossaryModal } from './components/GlossaryModal';
 
 function useDarkMode() {
   const [isDark, setIsDark] = useState(() => {
@@ -42,6 +43,10 @@ const App = () => {
   const [project, setProject] = useState<ProjectData | null>(null);
   const [segments, setSegments] = useState<Segment[]>([]);
   const segmentsRef = useRef<Segment[]>([]);
+  const [glossary, setGlossary] = useState<GlossaryTerm[]>([]);
+  const glossaryRef = useRef<GlossaryTerm[]>([]);
+  const [isGlossaryModalOpen, setIsGlossaryModalOpen] = useState(false);
+  const [isScanningGlossary, setIsScanningGlossary] = useState(false);
   const [systemLogs, setSystemLogs] = useState<SystemLogEntry[]>([]);
   const [aiLogs, setAiLogs] = useState<AIDebugLogEntry[]>([]);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
@@ -72,7 +77,6 @@ const App = () => {
       forceAlignment: false
   });
 
-  const scrollRef = useRef<HTMLDivElement>(null);
   const processorRef = useRef<EpubProcessor | null>(null);
 
   // --- LOGGING ---
@@ -94,7 +98,6 @@ const App = () => {
               type,
               data
           };
-          // Keep last 200 logs to prevent memory issues
           if (prev.length > 200) return [...prev.slice(1), newLog];
           return [...prev, newLog];
       });
@@ -110,12 +113,10 @@ const App = () => {
               }
               setProject(proj);
               
-              // Load saved export settings if available
               if (proj.exportSettings) {
                   setExportSettings(proj.exportSettings);
               }
 
-              // Reset any segments stuck in TRANSLATING state
               const resetCount = await dbService.resetTranslatingSegments();
               if (resetCount > 0) {
                   addLog(`Reset ${resetCount} stuck translating segments.`, 'INFO');
@@ -124,8 +125,11 @@ const App = () => {
               const segs = await dbService.getAllSegments();
               segmentsRef.current = segs;
               setSegments(segs);
+
+              const loadedGlossary = await dbService.getGlossary();
+              glossaryRef.current = loadedGlossary;
+              setGlossary(loadedGlossary);
               
-              // Find first pending or translated segment to show
               const lastTranslatedIdx = segs.findIndex(s => s.status === SegmentStatus.PENDING);
               setActiveSegmentIndex(lastTranslatedIdx !== -1 ? lastTranslatedIdx : segs.length - 1);
 
@@ -192,7 +196,7 @@ const App = () => {
           addLog((e as Error).message, 'ERROR');
       } finally {
           setLoadingMsg(null);
-          setFileInputKey(k => k + 1); // Reset input
+          setFileInputKey(k => k + 1);
       }
   };
 
@@ -200,7 +204,6 @@ const App = () => {
       if (!project) return;
       try {
           addLog("Bundling EPUB...", 'INFO');
-          // Update project with current settings before export
           const updatedProject = { ...project, exportSettings };
           await dbService.saveProject(updatedProject);
           setProject(updatedProject);
@@ -213,14 +216,13 @@ const App = () => {
                   arabicTitle: updatedProject.arabicTitle, 
                   author: updatedProject.author, 
                   originalTitle: updatedProject.title,
-                  schemaVersion: updatedProject.schemaVersion, // Pass schema version for reliable export
+                  schemaVersion: updatedProject.schemaVersion,
                   exportSettings: updatedProject.exportSettings
               }
           );
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          // Format: <the title in arabic> (مترجم) [Arabic Translation] [<original title> - <author>].epub
           const arabicTitle = updatedProject.arabicTitle || "Translated Book";
           a.download = `${arabicTitle} (مترجم) [Arabic Translation] [${updatedProject.title} - ${updatedProject.author}].epub`;
           a.click();
@@ -264,17 +266,6 @@ const App = () => {
       }
   };
 
-  const deleteProject = async () => {
-      if(confirm("Are you sure? This will delete all translation progress.")) {
-          await dbService.clearDatabase();
-          setProject(null);
-          segmentsRef.current = [];
-          setSegments([]);
-          setView('landing');
-          addLog("Project deleted.", 'WARNING');
-      }
-  };
-
   const openProjectSettings = () => {
       if (!project) return;
       setEditArabicTitle(project.arabicTitle || '');
@@ -297,6 +288,67 @@ const App = () => {
       }
   };
 
+  // --- GLOSSARY HANDLERS ---
+  const handleScanBookGlossary = useCallback(async () => {
+      if (!project || isScanningGlossary) return;
+      setIsScanningGlossary(true);
+      addLog("Scanning book to extract recurring names, places, titles, and concepts...", 'INFO');
+      try {
+          const scanResult = await geminiService.extractInitialBookGlossary(
+              segmentsRef.current,
+              project.title,
+              (msg, type, data) => addAiLog(msg, type, data)
+          );
+          if (scanResult.succeeded) {
+              const merged = await dbService.saveGlossaryTerms(scanResult.terms, false);
+              glossaryRef.current = merged;
+              setGlossary(merged);
+
+              const updatedProj: ProjectData = { ...project, glossaryInitialized: true };
+              await dbService.saveProject(updatedProj);
+              setProject(updatedProj);
+              addLog(`Glossary scan complete: ${merged.length} active terms.`, 'SUCCESS');
+          } else if (scanResult.quotaExhausted) {
+              addLog("Glossary scan paused: API Quota exceeded across models.", 'WARNING');
+          } else {
+              addLog("Glossary scan could not complete on available models.", 'ERROR');
+          }
+      } catch (err) {
+          addLog(`Glossary scan failed: ${(err as Error).message}`, 'ERROR');
+      } finally {
+          setIsScanningGlossary(false);
+      }
+  }, [project, isScanningGlossary, addLog, addAiLog]);
+
+  const handleSaveGlossaryTerm = useCallback(async (term: GlossaryTerm) => {
+      await dbService.upsertGlossaryTerm(term);
+      const updated = await dbService.getGlossary();
+      glossaryRef.current = updated;
+      setGlossary(updated);
+      addLog(`Glossary term saved: "${term.source}" ➔ "${term.target}"`, 'INFO');
+  }, [addLog]);
+
+  const handleDeleteGlossaryTerm = useCallback(async (id: string) => {
+      await dbService.deleteGlossaryTerm(id);
+      const updated = await dbService.getGlossary();
+      glossaryRef.current = updated;
+      setGlossary(updated);
+  }, []);
+
+  const handleReplaceAcrossSegments = useCallback(async (oldArabic: string, newArabic: string) => {
+      const result = await dbService.replaceTermInSegments(oldArabic, newArabic);
+      segmentsRef.current = result.segments;
+      setSegments([...result.segments]);
+      addLog(
+          `Replaced ${result.replacementsCount} occurrence(s) of "${oldArabic}" with "${newArabic}" across ${result.updatedSegmentsCount} segment(s).`,
+          'SUCCESS'
+      );
+      return {
+          updatedSegmentsCount: result.updatedSegmentsCount,
+          replacementsCount: result.replacementsCount,
+      };
+  }, [addLog]);
+
   const dbUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleSegmentChange = useCallback((newText: string) => {
@@ -305,13 +357,11 @@ const App = () => {
       
       const updatedSegment = { ...segment, translatedHtml: newText };
       
-      // Update state immediately for responsive UI
       const newSegments = [...segmentsRef.current];
       newSegments[activeSegmentIndex] = updatedSegment;
       segmentsRef.current = newSegments;
       setSegments(newSegments);
       
-      // Debounce DB update
       if (dbUpdateTimeoutRef.current) clearTimeout(dbUpdateTimeoutRef.current);
       dbUpdateTimeoutRef.current = setTimeout(() => {
           dbService.updateSegment(updatedSegment);
@@ -319,7 +369,7 @@ const App = () => {
   }, [activeSegmentIndex]);
 
   // --- TRANSLATION LOOP ---
-  const { processingRef } = useTranslationProcessor(
+  useTranslationProcessor(
       appState,
       setAppState,
       segmentsRef,
@@ -328,7 +378,10 @@ const App = () => {
       setActiveSegmentIndex,
       addLog,
       addAiLog,
-      project?.exportSettings?.translationMode || 'normal'
+      project?.exportSettings?.translationMode || 'normal',
+      glossaryRef,
+      setGlossary,
+      setIsScanningGlossary
   );
 
   const togglePlayPause = useCallback(async () => {
@@ -343,7 +396,7 @@ const App = () => {
               setSegments(updated);
           }
           const proj = await dbService.getProject();
-          setProject(proj);
+          if (proj) setProject(proj);
           setAppState(AppState.TRANSLATING);
       }
   }, [appState, addLog]);
@@ -358,7 +411,7 @@ const App = () => {
       segmentsRef.current = updated;
       setSegments(updated);
       const proj = await dbService.getProject();
-      setProject(proj);
+      if (proj) setProject(proj);
       addLog("Retrying skipped segments...", 'INFO');
       setAppState(AppState.TRANSLATING);
   };
@@ -395,7 +448,7 @@ const App = () => {
                            Translate EPUBs to <span className="text-sky-500">Native Arabic</span> with AI.
                        </h2>
                        <p className="text-lg text-slate-600 dark:text-slate-400 leading-relaxed max-w-2xl">
-                           Professional-grade translation preserving formatting, structure, and literary tone using Google Gemini models.
+                           Professional-grade translation preserving formatting, structure, and literary terminology consistency using Google Gemini models.
                        </p>
                        
                        <div className="flex flex-col gap-4 w-full max-w-md">
@@ -424,12 +477,10 @@ const App = () => {
                   </div>
               )}
           </div>
-      )
+      );
   }
 
   // --- STUDIO VIEW ---
-  
-  // Guard for null project in studio
   if (!project) return null;
 
   const activeSegment = segments[activeSegmentIndex];
@@ -474,7 +525,6 @@ const App = () => {
 
       const fixedBlob = await processorRef.current.repair(actions, architectResult.isRTL);
       
-      // Update the project with the new blob
       const updatedProject = { ...project, sourceEpubBlob: fixedBlob };
       await dbService.saveProject(updatedProject);
       setProject(updatedProject);
@@ -505,21 +555,21 @@ const App = () => {
                    )}
                    <button 
                        onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
-                       className={`p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors`}
+                       className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                        title={isSidebarOpen ? "Collapse Sidebar" : "Expand Sidebar"}
                    >
                        {isSidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
                    </button>
               </div>
 
-              <div className={`flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden ${isSidebarOpen ? 'p-6 space-y-8' : 'p-2 space-y-6 flex flex-col items-center'}`}>
+              <div className={`flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden ${isSidebarOpen ? 'p-6 space-y-6' : 'p-2 space-y-6 flex flex-col items-center'}`}>
                   {isSidebarOpen ? (
                       <>
                           {/* Cover & Title */}
                           <div className="flex flex-col items-center text-center">
                               <div className="w-28 h-40 bg-slate-200 dark:bg-slate-700 rounded-md shadow-sm mb-4 overflow-hidden relative group">
                                   {project.coverUrl ? (
-                                      <img src={project.coverUrl} className="w-full h-full object-cover" />
+                                      <img src={project.coverUrl} alt={project.title} className="w-full h-full object-cover" />
                                   ) : (
                                       <div className="flex items-center justify-center h-full text-slate-400 dark:text-slate-500">
                                           <ImageIcon className="w-8 h-8" />
@@ -540,24 +590,24 @@ const App = () => {
                               <h2 className="font-bold text-slate-900 dark:text-slate-50 line-clamp-2 leading-tight mb-1 text-sm">{project.title}</h2>
                               <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">{project.author}</p>
                               {project.arabicTitle && (
-                                  <div className="bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-300 px-3 py-1 rounded-full text-xs font-arabic">{project.arabicTitle}</div>
+                                  <div className="text-sky-700 dark:text-sky-300 text-xs font-arabic">{project.arabicTitle}</div>
                               )}
-                              <Button variant="ghost" size="sm" className="mt-2 text-xs" onClick={openProjectSettings}>
+                              <Button variant="ghost" size="sm" className="mt-1 text-xs" onClick={openProjectSettings}>
                                   Edit Details
                               </Button>
                           </div>
 
                           {/* Stats */}
-                          <div className="space-y-4">
+                          <div className="space-y-3">
                               <Label>Translation Progress</Label>
                               <ProgressBar current={project.translatedSegments} total={project.totalSegments} />
                               <div className="grid grid-cols-2 gap-3">
                                   <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-100 dark:border-slate-700/50 text-center">
-                                      <div className="text-xl font-bold text-slate-900 dark:text-slate-50">{project.translatedSegments}</div>
+                                      <div className="text-xl font-bold font-mono tabular-nums text-slate-900 dark:text-slate-50">{project.translatedSegments}</div>
                                       <div className="text-[10px] uppercase text-slate-500 dark:text-slate-400 font-semibold mt-1">Done</div>
                                   </div>
                                   <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-100 dark:border-slate-700/50 text-center">
-                                      <div className="text-xl font-bold text-slate-900 dark:text-slate-50">{project.totalSegments - project.translatedSegments}</div>
+                                      <div className="text-xl font-bold font-mono tabular-nums text-slate-900 dark:text-slate-50">{project.totalSegments - project.translatedSegments}</div>
                                       <div className="text-[10px] uppercase text-slate-500 dark:text-slate-400 font-semibold mt-1">Remaining</div>
                                   </div>
                               </div>
@@ -566,6 +616,13 @@ const App = () => {
                           {/* Controls */}
                           <div className="space-y-2">
                               <Label>Actions</Label>
+                              {isScanningGlossary && (
+                                  <div className="p-2.5 rounded-md bg-sky-50 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-800/50 flex items-center gap-2 text-xs text-sky-700 dark:text-sky-300">
+                                      <Spinner className="w-3.5 h-3.5 shrink-0 text-sky-500" />
+                                      <span className="truncate">Building Book Glossary...</span>
+                                  </div>
+                              )}
+
                               {appState === AppState.TRANSLATING ? (
                                   <Button onClick={togglePlayPause} className="w-full bg-amber-500 hover:bg-amber-600 text-white shadow-sm dark:bg-amber-600 dark:hover:bg-amber-500 dark:text-slate-900">
                                       <Pause className="w-4 h-4 mr-2" /> Pause
@@ -582,6 +639,20 @@ const App = () => {
                                       <RefreshCw className="w-4 h-4 mr-2" /> Retry {skippedCount} Skipped
                                   </Button>
                               )}
+
+                              <Button
+                                  variant="secondary"
+                                  onClick={() => setIsGlossaryModalOpen(true)}
+                                  className="w-full justify-between"
+                              >
+                                  <span className="flex items-center">
+                                      <BookOpen className="w-4 h-4 mr-2 text-sky-500" />
+                                      Book Glossary
+                                  </span>
+                                  <span className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                                      {glossary.length} terms
+                                  </span>
+                              </Button>
 
                               <Button variant="secondary" onClick={handleBackup} className="w-full">
                                   <Save className="w-4 h-4 mr-2" /> Backup Project
@@ -601,7 +672,7 @@ const App = () => {
                           {/* Mini Progress */}
                           <div className="flex flex-col items-center gap-2 w-full mt-2">
                               <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Prog</div>
-                              <div className="text-sm font-bold text-sky-500">{progressPercent}%</div>
+                              <div className="text-sm font-bold font-mono tabular-nums text-sky-500">{progressPercent}%</div>
                               <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
                                   <div className="bg-sky-500 h-full rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }} />
                               </div>
@@ -618,6 +689,16 @@ const App = () => {
                                   disabled={appState === AppState.COMPLETED}
                               >
                                   {appState === AppState.TRANSLATING ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                              </Button>
+
+                              <Button
+                                  variant="secondary"
+                                  size="icon"
+                                  className="w-10 h-10 rounded-full"
+                                  onClick={() => setIsGlossaryModalOpen(true)}
+                                  title={`Book Glossary (${glossary.length} terms)`}
+                              >
+                                  <BookOpen className="w-4 h-4 text-sky-500" />
                               </Button>
                               
                               {skippedCount > 0 && appState !== AppState.TRANSLATING && (
@@ -676,7 +757,7 @@ const App = () => {
                            <span className="hidden md:inline text-sm font-semibold text-slate-500 dark:text-slate-400">Segment</span>
                            <div className="flex items-center bg-slate-100 dark:bg-slate-900 rounded-md p-1 border border-slate-200 dark:border-slate-700">
                                <button disabled={activeSegmentIndex <= 0} onClick={() => setActiveSegmentIndex(i => i - 1)} className="p-1 hover:bg-white dark:hover:bg-slate-800 rounded text-slate-600 dark:text-slate-300 disabled:opacity-50 transition-colors"><ChevronLeft className="w-4 h-4"/></button>
-                               <span className="w-12 md:w-16 text-center text-xs font-mono text-slate-700 dark:text-slate-300">{activeSegmentIndex + 1} / {segments.length}</span>
+                               <span className="w-12 md:w-16 text-center text-xs font-mono tabular-nums text-slate-700 dark:text-slate-300">{activeSegmentIndex + 1} / {segments.length}</span>
                                <button disabled={activeSegmentIndex >= segments.length - 1} onClick={() => setActiveSegmentIndex(i => i + 1)} className="p-1 hover:bg-white dark:hover:bg-slate-800 rounded text-slate-600 dark:text-slate-300 disabled:opacity-50 transition-colors"><ChevronRight className="w-4 h-4"/></button>
                            </div>
                        </div>
@@ -684,8 +765,22 @@ const App = () => {
                    </div>
 
                    <div className="flex items-center gap-1 md:gap-3">
+                       <Button
+                           variant="secondary"
+                           size="sm"
+                           onClick={() => setIsGlossaryModalOpen(true)}
+                           className="px-2.5 md:px-3 whitespace-nowrap"
+                           title="Open Book Terminology Glossary"
+                       >
+                           <BookOpen className="w-4 h-4 text-sky-500 md:mr-1.5" />
+                           <span className="hidden md:inline">Glossary</span>
+                           <span className="ml-1.5 font-mono tabular-nums text-[11px] text-slate-500 dark:text-slate-400">
+                               ({glossary.length})
+                           </span>
+                       </Button>
+
                        {/* Font Controls */}
-                       <div className="hidden md:flex items-center bg-slate-100 dark:bg-slate-900 rounded-md p-1 mr-2 border border-slate-200 dark:border-slate-700">
+                       <div className="hidden md:flex items-center bg-slate-100 dark:bg-slate-900 rounded-md p-1 mr-1 border border-slate-200 dark:border-slate-700">
                            <button 
                                 onClick={() => setFontType(t => t === 'serif' ? 'sans' : 'serif')} 
                                 className="p-1.5 hover:bg-white dark:hover:bg-slate-800 rounded text-slate-600 dark:text-slate-300 transition-colors"
@@ -695,7 +790,7 @@ const App = () => {
                            </button>
                            <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-1"></div>
                            <button onClick={() => setFontSize(s => Math.max(12, s - 2))} className="p-1.5 hover:bg-white dark:hover:bg-slate-800 rounded text-slate-600 dark:text-slate-300 transition-colors"><Minus className="w-3 h-3"/></button>
-                           <span className="text-xs font-mono w-6 text-center text-slate-500 dark:text-slate-400 select-none">{fontSize}</span>
+                           <span className="text-xs font-mono tabular-nums w-6 text-center text-slate-500 dark:text-slate-400 select-none">{fontSize}</span>
                            <button onClick={() => setFontSize(s => Math.min(32, s + 2))} className="p-1.5 hover:bg-white dark:hover:bg-slate-800 rounded text-slate-600 dark:text-slate-300 transition-colors"><Plus className="w-3 h-3"/></button>
                        </div>
 
@@ -705,7 +800,7 @@ const App = () => {
 
                         {/* Export Controls */}
                        <div className="flex items-center gap-1 ml-1 md:ml-2">
-                            <Button variant="primary" size="sm" onClick={handleExport} disabled={appState === AppState.TRANSLATING} className="px-2 md:px-4">
+                            <Button variant="primary" size="sm" onClick={handleExport} disabled={appState === AppState.TRANSLATING} className="px-2 md:px-4 whitespace-nowrap">
                                 <Download className="w-4 h-4 md:mr-2" /> <span className="hidden md:inline">Export EPUB</span>
                             </Button>
                        </div>
@@ -732,8 +827,6 @@ const App = () => {
                       </div>
                   </div>
                   
-                  {/* Action Bar removed */}
-                  
                   {/* System Console */}
                   <Console 
                       systemLogs={systemLogs} 
@@ -744,6 +837,19 @@ const App = () => {
               </div>
 
           </main>
+
+          {/* Glossary Manager Modal */}
+          <GlossaryModal
+              isOpen={isGlossaryModalOpen}
+              onClose={() => setIsGlossaryModalOpen(false)}
+              glossary={glossary}
+              segments={segments}
+              isScanning={isScanningGlossary}
+              onScanBook={handleScanBookGlossary}
+              onSaveTerm={handleSaveGlossaryTerm}
+              onDeleteTerm={handleDeleteGlossaryTerm}
+              onReplaceAcrossSegments={handleReplaceAcrossSegments}
+          />
 
           {/* Project Settings Modal */}
           <Modal 
