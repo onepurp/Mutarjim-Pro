@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState, useMemo, Component, ErrorInfo, ReactNode } from 'react';
-import { Loader2, Terminal, AlertTriangle, X, Maximize2, Minimize2, Info, GripVertical, Bot, Activity, ChevronRight, ChevronDown, FileJson, ShieldAlert, Copy, Check, Edit3, RotateCcw } from 'lucide-react';
+import { Loader2, Terminal, AlertTriangle, X, Maximize2, Minimize2, Info, GripVertical, Bot, Activity, ChevronRight, ChevronDown, FileJson, ShieldAlert, Copy, Check, Edit3, RotateCcw, Scissors, FileCode, CheckCircle2 } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Segment, SystemLogEntry, AIDebugLogEntry } from '../types';
+import { Segment, SystemLogEntry, AIDebugLogEntry, SegmentStatus } from '../types';
 import { cn } from '../lib/utils';
 
 // --- Error Boundary ---
@@ -493,7 +493,35 @@ export function useIsMobile() {
     return isMobile;
 }
 
-export const SplitView = React.memo(({ original, translated, onTranslatedChange, isTranslating, fontSize, fontType }: { original: string, translated: string | null, onTranslatedChange: (val: string) => void, isTranslating: boolean, fontSize: number, fontType: 'serif' | 'sans' }) => {
+export const SplitView = React.memo(({ 
+    original, 
+    translated, 
+    onTranslatedChange, 
+    isTranslating, 
+    fontSize, 
+    fontType,
+    status,
+    error,
+    translationMode = 'normal',
+    onMarkTranslated,
+    onCopySourceTags,
+    onMicroSegment,
+    isMicroSegmenting = false
+}: { 
+    original: string;
+    translated: string | null;
+    onTranslatedChange: (val: string) => void;
+    isTranslating: boolean;
+    fontSize: number;
+    fontType: 'serif' | 'sans';
+    status?: SegmentStatus;
+    error?: string;
+    translationMode?: 'normal' | 'second_mode';
+    onMarkTranslated?: () => void;
+    onCopySourceTags?: () => void;
+    onMicroSegment?: () => void;
+    isMicroSegmenting?: boolean;
+}) => {
     const [ratio, setRatio] = useState(() => {
         const saved = localStorage.getItem('mutarjim-split-ratio');
         return saved ? parseFloat(saved) : 50;
@@ -544,6 +572,7 @@ export const SplitView = React.memo(({ original, translated, onTranslatedChange,
     };
 
     const fontClass = fontType === 'serif' ? 'font-arabicSerif' : 'font-arabic';
+    const hasIsolatedRefusal = Boolean(translated && translated.includes('isolated-refusal'));
 
     return (
         <div ref={containerRef} className="flex flex-col md:flex-row h-full w-full gap-2 relative isolate">
@@ -571,19 +600,101 @@ export const SplitView = React.memo(({ original, translated, onTranslatedChange,
 
             <div style={isMobile ? { flex: 1 } : { width: `calc(${100 - ratio}% - 4px)` }} className="min-w-0 transition-[width] duration-75 ease-linear">
                 <div className="flex flex-col h-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden relative transition-all duration-300">
-                    <div className="h-12 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between px-4 bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur-sm shrink-0">
-                        <div className="flex items-center gap-3">
+                    <div className="h-12 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between px-3 md:px-4 bg-slate-50/80 dark:bg-slate-800/80 backdrop-blur-sm shrink-0">
+                        <div className="flex items-center gap-2 md:gap-3">
                             <div className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
                             <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
                                 Arabic Translation
                             </span>
+                            {status && (
+                                <Badge status={status} className="text-[10px] py-0 px-2 h-5" />
+                            )}
                         </div>
-                        <div className="flex items-center gap-3">
+                        
+                        <div className="flex items-center gap-1.5">
+                            {/* Second Mode Only: Micro-Segment on demand button */}
+                            {translationMode === 'second_mode' && onMicroSegment && (
+                                <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    onClick={onMicroSegment} 
+                                    disabled={isTranslating || isMicroSegmenting}
+                                    className="h-7 text-xs border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-700/60 dark:text-amber-300 dark:hover:bg-amber-950/30"
+                                    title="Decompose paragraph and translate sentence-by-sentence to isolate forbidden content"
+                                >
+                                    {isMicroSegmenting ? (
+                                        <Spinner className="w-3.5 h-3.5 mr-1" />
+                                    ) : (
+                                        <Scissors className="w-3.5 h-3.5 mr-1 text-amber-500" />
+                                    )}
+                                    <span className="hidden sm:inline">Isolate & Split</span>
+                                </Button>
+                            )}
+
+                            {/* Copy Source HTML Tags to Editor */}
+                            {onCopySourceTags && (
+                                <Button 
+                                    variant="ghost" 
+                                    size="sm" 
+                                    onClick={onCopySourceTags} 
+                                    disabled={isTranslating}
+                                    className="h-7 text-xs text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+                                    title="Copy source HTML tags into editor so you can translate inner text manually"
+                                >
+                                    <FileCode className="w-3.5 h-3.5 mr-1" />
+                                    <span className="hidden sm:inline">Copy Tags</span>
+                                </Button>
+                            )}
+
+                            {/* Mark as Translated */}
+                            {onMarkTranslated && status !== SegmentStatus.TRANSLATED && (
+                                <Button 
+                                    variant="primary" 
+                                    size="sm" 
+                                    onClick={onMarkTranslated} 
+                                    disabled={isTranslating || !translated}
+                                    className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                                    title="Mark this segment as translated"
+                                >
+                                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                                    <span>Mark Translated</span>
+                                </Button>
+                            )}
+
                             <button onClick={handleCopy} disabled={!translated} className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-md hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors disabled:opacity-50" title="Copy HTML">
                                 {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
                             </button>
                         </div>
                     </div>
+
+                    {/* Notice Banners */}
+                    {hasIsolatedRefusal && (
+                        <div className="px-4 py-2 bg-rose-500/10 border-b border-rose-500/20 text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
+                                <span><strong>Micro-Segmented:</strong> Sensitive sentence(s) refused by AI safety policies are isolated in red. You can translate them manually inside the editor or leave them as-is.</span>
+                            </div>
+                        </div>
+                    )}
+
+                    {error && !hasIsolatedRefusal && (status === SegmentStatus.FAILED || status === SegmentStatus.SKIPPED) && (
+                        <div className="px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 text-xs text-amber-700 dark:text-amber-300 flex items-center justify-between">
+                            <div className="flex items-center gap-2 truncate">
+                                <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                                <span className="truncate"><strong>Translation Issue:</strong> {error}</span>
+                            </div>
+                            {translationMode === 'second_mode' && onMicroSegment && (
+                                <button 
+                                    onClick={onMicroSegment} 
+                                    disabled={isMicroSegmenting}
+                                    className="ml-3 px-2 py-0.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-[11px] font-semibold transition-colors shrink-0 flex items-center gap-1"
+                                >
+                                    <Scissors className="w-3 h-3" />
+                                    <span>Micro-Segment Now</span>
+                                </button>
+                            )}
+                        </div>
+                    )}
                     
                     <div className="flex-1 relative bg-slate-50/30 dark:bg-slate-900/30 overflow-y-auto custom-scrollbar">
                         {(!translated && !isTranslating) && (
@@ -591,7 +702,8 @@ export const SplitView = React.memo(({ original, translated, onTranslatedChange,
                                 <div className="w-16 h-16 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-full flex items-center justify-center mb-4 bg-slate-50 dark:bg-slate-800/50">
                                     <Info className="w-6 h-6 text-slate-300 dark:text-slate-600" />
                                 </div>
-                                <p className="text-sm font-medium">No content loaded</p>
+                                <p className="text-sm font-medium">No translation loaded</p>
+                                <p className="text-xs text-slate-400 mt-1">Start translation or type directly in this pane</p>
                             </div>
                         )}
                         

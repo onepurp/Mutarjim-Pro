@@ -132,6 +132,9 @@ export interface FontRecommendation {
   category: 'serif' | 'sans-serif' | 'display' | 'monospace' | 'handwriting';
   subset: string;
   justification: string;
+  isCustomOverride?: boolean;
+  originalFontFamily?: string;
+  originalKebabName?: string;
 }
 
 export interface TypographyProfile {

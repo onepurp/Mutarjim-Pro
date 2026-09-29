@@ -58,14 +58,30 @@ export const downloadFontFamily = async (
     const uniqueWeights = [...new Set(weightsToTry)];
 
     for (const weight of uniqueWeights) {
-        // Try Normal
-        const normalUrl = getFontUrl(kebabName, subset, weight, 'normal');
-        const normalBuf = await fetchFontFile(normalUrl);
+        // Try Normal with resolved subset fallbacks
+        let normalBuf = await fetchFontFile(getFontUrl(kebabName, subset, weight, 'normal'));
+        let resolvedSubset = subset;
+
+        if (!normalBuf && subset !== 'latin') {
+            normalBuf = await fetchFontFile(getFontUrl(kebabName, 'latin', weight, 'normal'));
+            if (normalBuf) resolvedSubset = 'latin';
+        }
+        if (!normalBuf) {
+            normalBuf = await fetchFontFile(getFontUrl(kebabName, 'all', weight, 'normal'));
+            if (normalBuf) resolvedSubset = 'all';
+        }
+        // Fallback: If non-400 weight is missing, try 400 weight as replacement
+        if (!normalBuf && weight !== 400) {
+            normalBuf = await fetchFontFile(getFontUrl(kebabName, subset, 400, 'normal')) 
+                     || await fetchFontFile(getFontUrl(kebabName, 'latin', 400, 'normal'));
+            if (normalBuf) resolvedSubset = subset;
+        }
+
         if (normalBuf) {
             assets.push({
-                id: `${kebabName}-${subset}-${weight}-normal`,
+                id: `${kebabName}-${resolvedSubset}-${weight}-normal`,
                 family,
-                filename: `${kebabName}-${subset}-${weight}-normal.woff2`,
+                filename: `${kebabName}-${resolvedSubset}-${weight}-normal.woff2`,
                 format: 'woff2',
                 buffer: normalBuf,
                 weight,
@@ -75,13 +91,15 @@ export const downloadFontFamily = async (
 
         // Try Italic (only for body or quote typically)
         if (role === 'body' || role === 'quote') {
-             const italicUrl = getFontUrl(kebabName, subset, weight, 'italic');
-             const italicBuf = await fetchFontFile(italicUrl);
+             let italicBuf = await fetchFontFile(getFontUrl(kebabName, resolvedSubset, weight, 'italic'));
+             if (!italicBuf && resolvedSubset !== 'latin') {
+                 italicBuf = await fetchFontFile(getFontUrl(kebabName, 'latin', weight, 'italic'));
+             }
              if (italicBuf) {
                 assets.push({
-                    id: `${kebabName}-${subset}-${weight}-italic`,
+                    id: `${kebabName}-${resolvedSubset}-${weight}-italic`,
                     family,
-                    filename: `${kebabName}-${subset}-${weight}-italic.woff2`,
+                    filename: `${kebabName}-${resolvedSubset}-${weight}-italic.woff2`,
                     format: 'woff2',
                     buffer: italicBuf,
                     weight,

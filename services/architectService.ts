@@ -212,7 +212,13 @@ export class EpubProcessor {
     return aiResult;
   }
 
-  async repair(actions: RepairActions, isRTL: boolean): Promise<Blob> {
+  setFontRecommendations(recommendations: FontRecommendation[]): void {
+    if (this.analysisResult) {
+      this.analysisResult.fontRecommendations = recommendations;
+    }
+  }
+
+  async repair(actions: RepairActions, isRTL: boolean, customFontRecommendations?: FontRecommendation[]): Promise<Blob> {
     if (!this.zip) throw new Error("No file loaded");
     this.log("Starting repair process...");
 
@@ -221,9 +227,9 @@ export class EpubProcessor {
     const fontRoleMap: Record<string, string> = {}; // role -> familyName
 
     // --- DYNAMIC FONT EMBEDDING ---
-    if (actions.embedFonts && this.analysisResult?.fontRecommendations) {
-        this.log("Acquiring fonts based on Book Personality...");
-        const recommendations = this.analysisResult.fontRecommendations;
+    const recommendations = customFontRecommendations || this.analysisResult?.fontRecommendations;
+    if (actions.embedFonts && recommendations) {
+        this.log("Acquiring fonts based on Book Personality and user preferences...");
         
         for (const rec of recommendations) {
             try {

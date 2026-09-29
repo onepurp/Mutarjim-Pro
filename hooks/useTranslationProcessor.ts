@@ -162,9 +162,10 @@ export const useTranslationProcessor = (
                     setActiveSegmentIndex(segIndex);
                 }
 
+                let matchedTerms: GlossaryTerm[] = [];
                 try {
                     const activeGlossary = glossaryRef ? glossaryRef.current : [];
-                    const matchedTerms = geminiService.matchGlossaryTermsForHtml(
+                    matchedTerms = geminiService.matchGlossaryTermsForHtml(
                         segment.originalHtml,
                         activeGlossary
                     );
@@ -213,7 +214,51 @@ export const useTranslationProcessor = (
                     }
 
                     // Non-quota error (e.g. Tag mismatch, safety filter, etc.):
-                    // Do NOT pause the entire processor! The worker continues processing the next segments.
+                    // In Second Mode ONLY: If translation failed due to refusal/filter, attempt Micro-Segmentation / Sub-Sentence Isolation!
+                    if (translationMode === 'second_mode') {
+                        addLog(`Segment ${segment.id} refused in Second Mode. Attempting Micro-Segmentation fallback...`, 'INFO');
+                        try {
+                            const microResult = await geminiService.translateWithMicroSegmentation(
+                                segment.originalHtml,
+                                (msg, type, data) => addAiLog(msg, type, data),
+                                matchedTerms
+                            );
+                            if (microResult && microResult.translatedHtml) {
+                                segment.translatedHtml = microResult.translatedHtml;
+                                segment.status = SegmentStatus.TRANSLATED;
+                                segment.error = microResult.isolatedSentencesCount > 0
+                                    ? `Second Mode Micro-Segmented: ${microResult.isolatedSentencesCount} sensitive sentence(s) isolated.`
+                                    : undefined;
+                                await dbService.updateSegment(segment);
+                                if (segIndex !== -1) {
+                                    segmentsRef.current[segIndex] = segment;
+                                }
+                                setProject(prev => prev ? ({ ...prev, translatedSegments: prev.translatedSegments + 1 }) : null);
+                                addLog(`Segment ${segment.id} translated via Micro-Segmentation (${microResult.isolatedSentencesCount} sentence(s) isolated).`, 'SUCCESS');
+                                enqueueLiveGlossaryDiscovery(segment.originalHtml, microResult.translatedHtml);
+                                continue;
+                            }
+                        } catch (microErr: any) {
+                            if (isQuotaError(microErr)) {
+                                if (!isQuotaHit) {
+                                    isQuotaHit = true;
+                                    discoveryQueueRef.current = [];
+                                    setAppState(AppState.QUOTA_PAUSED);
+                                    addLog("API Quota hit during micro-segmentation. Pausing.", 'WARNING');
+                                    playRingSound();
+                                }
+                                segment.status = SegmentStatus.PENDING;
+                                await dbService.updateSegment(segment);
+                                if (segIndex !== -1) {
+                                    segmentsRef.current[segIndex] = { ...segmentsRef.current[segIndex], status: SegmentStatus.PENDING };
+                                }
+                                break;
+                            }
+                            addAiLog(`Micro-segmentation attempt on ${segment.id} failed: ${microErr.message}`, 'WARNING');
+                        }
+                    }
+
+                    // Standard failure tracking: Do NOT pause the entire processor! The worker continues processing the next segments.
                     segment.status = SegmentStatus.FAILED;
                     segment.error = err.message || 'Translation failed';
                     segment.retryCount = (segment.retryCount || 0) + 1;

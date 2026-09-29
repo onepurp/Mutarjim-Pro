@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Upload, Book, BookOpen, Play, Pause, Download, Save, FolderOpen, Image as ImageIcon, ChevronRight, ChevronLeft, RefreshCw, Globe, LogOut, Type, Minus, Plus, AlignLeft, AlignCenter, AlignRight, AlignJustify, Wand2, Moon, Sun, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Upload, Book, BookOpen, Play, Pause, Download, Save, FolderOpen, Image as ImageIcon, ChevronRight, ChevronLeft, RefreshCw, Globe, LogOut, Type, Minus, Plus, AlignLeft, AlignCenter, AlignRight, AlignJustify, Wand2, Moon, Sun, PanelLeftClose, PanelLeftOpen, AlertTriangle } from 'lucide-react';
 import { AppState, ProjectData, Segment, SegmentStatus, SystemLogEntry, LogType, AIDebugLogEntry, ExportSettings, ArchitectAnalysisResult, GlossaryTerm } from './types';
 import { dbService } from './services/db';
 import { epubService } from './services/epubService';
@@ -349,6 +349,7 @@ const App = () => {
       };
   }, [addLog]);
 
+  const [isMicroSegmenting, setIsMicroSegmenting] = useState(false);
   const dbUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleSegmentChange = useCallback((newText: string) => {
@@ -367,6 +368,126 @@ const App = () => {
           dbService.updateSegment(updatedSegment);
       }, 500);
   }, [activeSegmentIndex]);
+
+  const handleMarkActiveSegmentTranslated = useCallback(async () => {
+      const segment = segmentsRef.current[activeSegmentIndex];
+      if (!segment) return;
+
+      const wasAlreadyTranslated = segment.status === SegmentStatus.TRANSLATED;
+      const updatedSegment: Segment = {
+          ...segment,
+          status: SegmentStatus.TRANSLATED,
+          error: undefined,
+      };
+
+      const newSegments = [...segmentsRef.current];
+      newSegments[activeSegmentIndex] = updatedSegment;
+      segmentsRef.current = newSegments;
+      setSegments(newSegments);
+      await dbService.updateSegment(updatedSegment);
+
+      if (!wasAlreadyTranslated) {
+          setProject(prev => prev ? ({ ...prev, translatedSegments: prev.translatedSegments + 1 }) : null);
+          const proj = await dbService.getProject();
+          if (proj) {
+              const updatedProj = { ...proj, translatedSegments: proj.translatedSegments + 1 };
+              await dbService.saveProject(updatedProj);
+          }
+      }
+      addLog(`Segment ${activeSegmentIndex + 1} marked as translated.`, 'SUCCESS');
+  }, [activeSegmentIndex, addLog]);
+
+  const handleCopySourceTagsToActiveSegment = useCallback(() => {
+      const segment = segmentsRef.current[activeSegmentIndex];
+      if (!segment) return;
+      handleSegmentChange(segment.originalHtml);
+      addLog(`Source HTML tags copied to editor for segment ${activeSegmentIndex + 1}.`, 'INFO');
+  }, [activeSegmentIndex, handleSegmentChange, addLog]);
+
+  const handleMicroSegmentActiveSegment = useCallback(async () => {
+      const segment = segmentsRef.current[activeSegmentIndex];
+      if (!segment || isMicroSegmenting) return;
+
+      setIsMicroSegmenting(true);
+      addLog(`Running Second Mode Micro-Segmentation on segment ${activeSegmentIndex + 1}...`, 'INFO');
+      try {
+          const activeGlossary = glossaryRef.current;
+          const matchedTerms = geminiService.matchGlossaryTermsForHtml(
+              segment.originalHtml,
+              activeGlossary
+          );
+          const microResult = await geminiService.translateWithMicroSegmentation(
+              segment.originalHtml,
+              (msg, type, data) => addAiLog(msg, type, data),
+              matchedTerms
+          );
+
+          if (microResult && microResult.translatedHtml) {
+              const wasAlreadyTranslated = segment.status === SegmentStatus.TRANSLATED;
+              const updatedSegment: Segment = {
+                  ...segment,
+                  translatedHtml: microResult.translatedHtml,
+                  status: SegmentStatus.TRANSLATED,
+                  error: microResult.isolatedSentencesCount > 0
+                      ? `Micro-Segmented: ${microResult.isolatedSentencesCount} sensitive sentence(s) isolated due to model refusal.`
+                      : undefined,
+              };
+
+              const newSegments = [...segmentsRef.current];
+              newSegments[activeSegmentIndex] = updatedSegment;
+              segmentsRef.current = newSegments;
+              setSegments(newSegments);
+              await dbService.updateSegment(updatedSegment);
+
+              if (!wasAlreadyTranslated) {
+                  setProject(prev => prev ? ({ ...prev, translatedSegments: prev.translatedSegments + 1 }) : null);
+                  const proj = await dbService.getProject();
+                  if (proj) {
+                      const updatedProj = { ...proj, translatedSegments: proj.translatedSegments + 1 };
+                      await dbService.saveProject(updatedProj);
+                  }
+              }
+
+              addLog(`Segment ${activeSegmentIndex + 1} successfully micro-segmented (${microResult.isolatedSentencesCount} sentence(s) isolated).`, 'SUCCESS');
+          }
+      } catch (err: any) {
+          addLog(`Micro-segmentation failed: ${err.message}`, 'ERROR');
+      } finally {
+          setIsMicroSegmenting(false);
+      }
+  }, [activeSegmentIndex, isMicroSegmenting, addLog, addAiLog]);
+
+  const handleJumpToNextIssue = useCallback(() => {
+      const currentIndex = activeSegmentIndex;
+      const count = segments.length;
+      if (count === 0) return;
+
+      let targetIndex = -1;
+      for (let i = currentIndex + 1; i < count; i++) {
+          const s = segments[i];
+          if (s.status === SegmentStatus.FAILED || s.status === SegmentStatus.SKIPPED || (s.translatedHtml && s.translatedHtml.includes('isolated-refusal'))) {
+              targetIndex = i;
+              break;
+          }
+      }
+
+      if (targetIndex === -1) {
+          for (let i = 0; i <= currentIndex; i++) {
+              const s = segments[i];
+              if (s.status === SegmentStatus.FAILED || s.status === SegmentStatus.SKIPPED || (s.translatedHtml && s.translatedHtml.includes('isolated-refusal'))) {
+                  targetIndex = i;
+                  break;
+              }
+          }
+      }
+
+      if (targetIndex !== -1 && targetIndex !== currentIndex) {
+          setActiveSegmentIndex(targetIndex);
+          addLog(`Jumped to segment ${targetIndex + 1} (${segments[targetIndex].status}).`, 'INFO');
+      } else {
+          addLog("No other failed or isolated segments found.", 'INFO');
+      }
+  }, [activeSegmentIndex, segments, addLog]);
 
   // --- TRANSLATION LOOP ---
   useTranslationProcessor(
@@ -523,7 +644,11 @@ const App = () => {
         embedFonts: true,
       };
 
-      const fixedBlob = await processorRef.current.repair(actions, architectResult.isRTL);
+      const fixedBlob = await processorRef.current.repair(
+        actions, 
+        architectResult.isRTL, 
+        architectResult.fontRecommendations
+      );
       
       const updatedProject = { ...project, sourceEpubBlob: fixedBlob };
       await dbService.saveProject(updatedProject);
@@ -760,6 +885,16 @@ const App = () => {
                                <span className="w-12 md:w-16 text-center text-xs font-mono tabular-nums text-slate-700 dark:text-slate-300">{activeSegmentIndex + 1} / {segments.length}</span>
                                <button disabled={activeSegmentIndex >= segments.length - 1} onClick={() => setActiveSegmentIndex(i => i + 1)} className="p-1 hover:bg-white dark:hover:bg-slate-800 rounded text-slate-600 dark:text-slate-300 disabled:opacity-50 transition-colors"><ChevronRight className="w-4 h-4"/></button>
                            </div>
+                           {segments.some(s => s.status === SegmentStatus.FAILED || s.status === SegmentStatus.SKIPPED || (s.translatedHtml && s.translatedHtml.includes('isolated-refusal'))) && (
+                               <button 
+                                   onClick={handleJumpToNextIssue} 
+                                   className="flex items-center gap-1 px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 dark:text-amber-300 rounded text-xs border border-amber-200 dark:border-amber-800/50 transition-colors"
+                                   title="Jump to next refused or failed segment"
+                               >
+                                   <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                                   <span className="hidden sm:inline">Next Issue</span>
+                               </button>
+                           )}
                        </div>
                        {activeSegment && <Badge status={activeSegment.status} className="hidden sm:inline-flex" />}
                    </div>
@@ -820,6 +955,13 @@ const App = () => {
                                   isTranslating={activeSegment.status === SegmentStatus.TRANSLATING}
                                   fontSize={fontSize}
                                   fontType={fontType}
+                                  status={activeSegment.status}
+                                  error={activeSegment.error}
+                                  translationMode={project?.exportSettings?.translationMode || 'normal'}
+                                  onMarkTranslated={handleMarkActiveSegmentTranslated}
+                                  onCopySourceTags={handleCopySourceTagsToActiveSegment}
+                                  onMicroSegment={handleMicroSegmentActiveSegment}
+                                  isMicroSegmenting={isMicroSegmenting}
                               />
                           ) : (
                               <div className="h-full flex items-center justify-center text-slate-400 dark:text-slate-500">Select a segment</div>
@@ -1041,6 +1183,12 @@ const App = () => {
                               onRepair={handleRepairEpub} 
                               onCancel={() => setArchitectResult(null)}
                               isRepairing={isAnalyzing}
+                              onUpdateFontRecommendations={(updatedFonts) => {
+                                  setArchitectResult(prev => prev ? { ...prev, fontRecommendations: updatedFonts } : null);
+                                  if (processorRef.current) {
+                                      processorRef.current.setFontRecommendations(updatedFonts);
+                                  }
+                              }}
                           />
                       )}
                   </>

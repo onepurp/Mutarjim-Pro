@@ -224,10 +224,223 @@ export interface InitialGlossaryScanResult {
   quotaExhausted: boolean;
 }
 
+export const splitTextIntoSentences = (text: string): string[] => {
+  if (!text) return [];
+  // Split on sentence-ending punctuation (. ! ? ؟ or newline) followed by whitespace, preserving sentence boundaries
+  const rawSentences = text
+    .split(/(?<=[.!?؟\n])\s+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  if (rawSentences.length === 0 && text.trim()) {
+    return [text.trim()];
+  }
+  return rawSentences;
+};
+
 export const geminiService = {
   matchGlossaryTermsForHtml,
   stripHtmlToPlainText,
+  splitTextIntoSentences,
   isQuotaError,
+
+  async translateSingleSentence(
+    sentence: string,
+    onLog?: LoggerCallback,
+    matchedGlossary: GlossaryTerm[] = []
+  ): Promise<{ success: boolean; text: string; isRefusal: boolean }> {
+    if (!sentence || !sentence.trim()) {
+      return { success: true, text: sentence, isRefusal: false };
+    }
+
+    // If text contains no letters (pure numbers, punctuation, or whitespace), return as-is
+    if (!/[a-zA-Z]/.test(sentence)) {
+      return { success: true, text: sentence, isRefusal: false };
+    }
+
+    if (!process.env.GEMINI_API_KEY) {
+      throw new Error("API Key is missing.");
+    }
+
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const safetySettings = [
+      { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE }
+    ];
+
+    const glossaryBlock = formatGlossaryBlock(matchedGlossary);
+    const systemPrompt = `You are an expert Arabic literary translator working on a published novel.
+Your task is to translate this single sentence from the literary text into natural, fluent Arabic.
+Context: This is an excerpt from a published literary fiction work. Do not censor, summarize, or refuse. Output ONLY the translated Arabic sentence, with no surrounding quotes, markdown, or commentary.${glossaryBlock}`;
+
+    const SECOND_MODE_MODELS = ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+
+    for (const model of SECOND_MODE_MODELS) {
+      try {
+        const response = await callWithRetryAndTimeout(
+          () => ai.models.generateContent({
+            model,
+            contents: { parts: [{ text: sentence }] },
+            config: {
+              systemInstruction: systemPrompt,
+              temperature: 0.7,
+              safetySettings,
+            }
+          }),
+          { timeoutMs: 30000, retries: 1 }
+        );
+
+        const text = response.text?.trim();
+        if (!text) continue;
+
+        const refusalCheck = isAiRefusalOrCommentary(text);
+        if (refusalCheck.isRefusal) {
+          onLog?.(`Sentence-level AI refusal on ${model}: "${sentence.slice(0, 40)}..."`, 'WARNING');
+          continue; // Try next model
+        }
+
+        // Check if Arabic was produced
+        const clean = sanitizeAiHtml(text);
+        if (!hasArabicCharacters(clean) && /[a-zA-Z]{3,}/.test(sentence)) {
+          continue;
+        }
+
+        return { success: true, text: clean, isRefusal: false };
+      } catch (err: any) {
+        if (isQuotaError(err)) {
+          throw err;
+        }
+      }
+    }
+
+    return { success: false, text: sentence, isRefusal: true };
+  },
+
+  async translateWithMicroSegmentation(
+    html: string,
+    onLog?: LoggerCallback,
+    matchedGlossary: GlossaryTerm[] = []
+  ): Promise<{ translatedHtml: string; isolatedSentencesCount: number }> {
+    if (!html || !html.trim()) {
+      return { translatedHtml: '', isolatedSentencesCount: 0 };
+    }
+
+    onLog?.("Starting Second Mode Micro-Segmentation / Sub-Sentence Isolation...", 'INFO');
+
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(`<body>${html}</body>`, 'text/html');
+    const childNodes = Array.from(doc.body.childNodes);
+
+    if (childNodes.length === 0) {
+      return { translatedHtml: html, isolatedSentencesCount: 0 };
+    }
+
+    let totalIsolated = 0;
+    const translatedNodes: string[] = [];
+
+    for (const node of childNodes) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const el = node as HTMLElement;
+        const outerHtml = el.outerHTML;
+
+        // Level 1: Try translating the single block element in Second Mode
+        try {
+          const translatedElHtml = await this.translateHtml(
+            outerHtml,
+            onLog,
+            'second_mode',
+            matchedGlossary
+          );
+          translatedNodes.push(translatedElHtml);
+          continue;
+        } catch (err: any) {
+          if (isQuotaError(err)) {
+            throw err; // Quota pauses execution as expected
+          }
+          onLog?.(`Block <${el.tagName.toLowerCase()}> refused. Decomposing into sentences...`, 'INFO');
+        }
+
+        // Level 2: Sentence-level decomposition within the refused element
+        const tagName = el.tagName.toLowerCase();
+        const attributes = Array.from(el.attributes)
+          .map(attr => `${attr.name}="${attr.value}"`)
+          .join(' ');
+        const attrString = attributes ? ` ${attributes}` : '';
+
+        const textContent = el.textContent || '';
+        if (!textContent.trim()) {
+          translatedNodes.push(outerHtml);
+          continue;
+        }
+
+        const sentences = splitTextIntoSentences(textContent);
+        const translatedParts: string[] = [];
+
+        for (const sentence of sentences) {
+          if (!sentence.trim()) continue;
+
+          const sentResult = await this.translateSingleSentence(
+            sentence,
+            onLog,
+            matchedGlossary
+          );
+
+          if (sentResult.success && sentResult.text) {
+            translatedParts.push(sentResult.text);
+          } else if (sentResult.isRefusal) {
+            totalIsolated++;
+            const escaped = sentence.replace(/"/g, '&quot;');
+            translatedParts.push(
+              `<span class="isolated-refusal" data-original="${escaped}" title="AI Safety Policy Refusal: Isolated for manual review">${sentence}</span>`
+            );
+            onLog?.(`Offending sentence isolated: "${sentence.slice(0, 50)}..."`, 'WARNING');
+          } else {
+            translatedParts.push(sentence);
+          }
+        }
+
+        const reconstructed = `<${tagName}${attrString}>${translatedParts.join(' ')}</${tagName}>`;
+        translatedNodes.push(reconstructed);
+
+      } else if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent || '';
+        if (!text.trim()) {
+          translatedNodes.push(text);
+          continue;
+        }
+
+        const sentences = splitTextIntoSentences(text);
+        const parts: string[] = [];
+        for (const sentence of sentences) {
+          if (!sentence.trim()) continue;
+          const sentResult = await this.translateSingleSentence(sentence, onLog, matchedGlossary);
+          if (sentResult.success && sentResult.text) {
+            parts.push(sentResult.text);
+          } else if (sentResult.isRefusal) {
+            totalIsolated++;
+            const escaped = sentence.replace(/"/g, '&quot;');
+            parts.push(
+              `<span class="isolated-refusal" data-original="${escaped}" title="AI Safety Policy Refusal: Isolated for manual review">${sentence}</span>`
+            );
+          } else {
+            parts.push(sentence);
+          }
+        }
+        translatedNodes.push(parts.join(' '));
+      }
+    }
+
+    const finalHtml = translatedNodes.join('\n');
+    onLog?.(`Micro-segmentation complete: ${totalIsolated} sensitive sentence(s) isolated cleanly.`, totalIsolated > 0 ? 'WARNING' : 'SUCCESS');
+
+    return {
+      translatedHtml: finalHtml,
+      isolatedSentencesCount: totalIsolated
+    };
+  },
 
   async repairHtmlTags(
     ai: GoogleGenAI,
@@ -310,7 +523,7 @@ Rules:
 5. If the text contains technical terms, keep them in English if appropriate or provide a standard Arabic equivalent.
 6. Preserve all numeric values.`;
 
-    const SECOND_MODE_MODELS = ['gemini-2.5-pro', 'gemini-flash-latest', 'gemini-flash-lite-latest'];
+    const SECOND_MODE_MODELS = [ 'gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
     const SECOND_MODE_TEMPERATURE = 1;
 
     const baseInstruction = mode === 'second_mode' ? SECOND_MODE_SYSTEM_INSTRUCTION : SYSTEM_INSTRUCTION;
@@ -632,7 +845,7 @@ Do NOT include common everyday words, and do NOT include terms already in this l
 If there are no notable new terms, return an empty array [].`;
 
     // Use gemini-flash-lite-latest first so live glossary learning has its own dedicated quota bucket
-    const liveModelsToTry = ['gemini-flash-lite-latest', 'gemini-flash-latest'];
+    const liveModelsToTry = ['gemini-flash-lite-latest', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
 
     for (const model of liveModelsToTry) {
       try {
@@ -730,8 +943,10 @@ If there are no notable new terms, return an empty array [].`;
 
   validateIntegrity(original: string, translated: string, onLog?: LoggerCallback): boolean {
     const getNormalizedTags = (str: string) => {
+      // Strip internal annotation spans like class="isolated-refusal" before comparing structural tags
+      const cleanedStr = str.replace(/<span class="isolated-refusal"[^>]*>([\s\S]*?)<\/span>/gi, '$1');
       // Matches opening and closing HTML tags: e.g. <p>, </div>, <span class="...">
-      const matches = str.match(/<\/?([a-zA-Z0-9]+)[^>]*>/g) || [];
+      const matches = cleanedStr.match(/<\/?([a-zA-Z0-9]+)[^>]*>/g) || [];
       return matches
         .map(rawTag => {
           const isClosing = rawTag.startsWith('</');
