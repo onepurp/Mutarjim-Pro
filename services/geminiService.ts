@@ -22,16 +22,139 @@ this is the most important and dangerous thing for me.
 
 type LoggerCallback = (msg: string, type: LogType, data?: any) => void;
 
+export interface ModelFailureReport {
+  model: string;
+  error: Error;
+  isQuota: boolean;
+  isIntegrity: boolean;
+  isRefusal?: boolean;
+  message: string;
+}
+
+export class AllModelsQuotaError extends Error {
+  readonly isAllModelsQuota = true;
+  readonly status = 429;
+  constructor(message: string, public readonly reports: ModelFailureReport[]) {
+    super(message);
+    this.name = 'AllModelsQuotaError';
+  }
+}
+
+export class TranslationIntegrityError extends Error {
+  readonly isIntegrity = true;
+  readonly isAllModelsQuota = false;
+  constructor(message: string, public readonly reports: ModelFailureReport[]) {
+    super(message);
+    this.name = 'TranslationIntegrityError';
+  }
+}
+
+export class TranslationRefusalError extends Error {
+  readonly isRefusal = true;
+  readonly isAllModelsQuota = false;
+  constructor(message: string, public readonly reports: ModelFailureReport[] = []) {
+    super(message);
+    this.name = 'TranslationRefusalError';
+  }
+}
+
 export const isQuotaError = (err: any): boolean => {
   if (!err) return false;
+  // If explicitly flagged as NOT all-models quota or an integrity/refusal error, it's not a quota pause
+  if (err.isAllModelsQuota === false || err.isIntegrity === true || err.isRefusal === true) {
+    return false;
+  }
+  if (err.isAllModelsQuota === true) {
+    return true;
+  }
   const msg = String(err.message || err || '').toLowerCase();
+  // Never classify a tag mismatch, refusal, or non-translation as a quota pause
+  if (
+    msg.includes('tag mismatch') ||
+    msg.includes('integrity check failed') ||
+    msg.includes('refusal') ||
+    msg.includes('non-arabic') ||
+    msg.includes('untranslated')
+  ) {
+    return false;
+  }
   return (
     err.status === 429 ||
     msg.includes('429') ||
-    msg.includes('quota') ||
     msg.includes('resource_exhausted') ||
-    msg.includes('rate limit')
+    msg.includes('rate limit') ||
+    (msg.includes('quota') && !msg.includes('tag mismatch') && !msg.includes('refusal'))
   );
+};
+
+export const isAiRefusalOrCommentary = (text: string): { isRefusal: boolean; reason?: string } => {
+  if (!text || text.trim().length === 0) return { isRefusal: true, reason: 'Empty response from model' };
+  const trimmed = text.trim();
+
+  // Standard English refusal & disclaimer patterns
+  const englishRefusalPatterns = [
+    /^(?:i\s*(?:cannot|can't|am unable to|am sorry|apologize|must decline)|as an ai|my safety policies|i am not able to|i'm unable to|i cannot assist)/i,
+    /(?:cannot fulfill this request|violates content policy|against safety guidelines|i cannot translate this)/i,
+    /^(?:sorry,\s*but\s*i\s*(?:cannot|can't)|unfortunately,\s*i\s*(?:cannot|can't))/i,
+  ];
+
+  for (const pattern of englishRefusalPatterns) {
+    if (pattern.test(trimmed)) {
+      return { isRefusal: true, reason: 'AI safety refusal or policy disclaimer detected' };
+    }
+  }
+
+  // Arabic refusal & disclaimer patterns
+  const arabicRefusalPatterns = [
+    /^(?:عذراً|أعتذر|لا أستطيع|لا يمكنني|بصفتي نموذج ذكاء|يؤسفني|لا يمكن تلبية)/i,
+    /(?:لا أستطيع تلبية هذا الطلب|ينتهك السياسات|لا يمكنني ترجمة هذا النص|لا أستطيع مساعدتك في هذا)/i,
+  ];
+
+  for (const pattern of arabicRefusalPatterns) {
+    if (pattern.test(trimmed)) {
+      return { isRefusal: true, reason: 'Arabic AI refusal or policy disclaimer detected' };
+    }
+  }
+
+  return { isRefusal: false };
+};
+
+export const hasArabicCharacters = (text: string): boolean => {
+  if (!text) return false;
+  return /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(text);
+};
+
+export const sanitizeAiHtml = (raw: string): string => {
+  if (!raw) return '';
+  let cleaned = raw.trim();
+
+  // Strip opening markdown code block (```html, ```xml, ```)
+  cleaned = cleaned.replace(/^```[a-zA-Z0-9]*\s*\n?/i, '');
+  // Strip trailing markdown code block (```)
+  cleaned = cleaned.replace(/\n?```\s*$/i, '');
+  cleaned = cleaned.trim();
+
+  // Strip conversational preamble if followed by actual HTML tags:
+  // e.g. "Here is the Arabic translation:\n\n<p>...</p>"
+  const firstTagIdx = cleaned.indexOf('<');
+  const lastTagIdx = cleaned.lastIndexOf('>');
+  if (firstTagIdx > 0 && lastTagIdx > firstTagIdx) {
+    const preamble = cleaned.substring(0, firstTagIdx).trim().toLowerCase();
+    const isPreamble =
+      preamble.includes('here is') ||
+      preamble.includes('certainly') ||
+      preamble.includes('below is') ||
+      preamble.includes('translation:') ||
+      preamble.includes('translated html') ||
+      preamble.includes('sure') ||
+      preamble.includes('الترجمة:') ||
+      preamble.includes('إليك الترجمة');
+    if (isPreamble) {
+      cleaned = cleaned.substring(firstTagIdx, lastTagIdx + 1).trim();
+    }
+  }
+
+  return cleaned.trim();
 };
 
 export const stripHtmlToPlainText = (html: string): string => {
@@ -106,6 +229,49 @@ export const geminiService = {
   stripHtmlToPlainText,
   isQuotaError,
 
+  async repairHtmlTags(
+    ai: GoogleGenAI,
+    model: string,
+    originalHtml: string,
+    flawedHtml: string,
+    onLog?: LoggerCallback
+  ): Promise<string | null> {
+    try {
+      const repairPrompt = `You are an expert HTML tag repair assistant for Arabic literary translations.
+The following translated Arabic HTML has tag mismatches (missing, extra, or incorrectly ordered tags) compared to the original English HTML.
+
+TASK:
+- Restore the exact HTML tag structure, tags, attributes, and nesting from the ORIGINAL HTML.
+- Keep the Arabic translated text completely intact and properly placed inside corresponding tags.
+- Output ONLY the corrected HTML string.
+- Do NOT wrap in markdown code blocks (\`\`\`html).
+
+ORIGINAL HTML (Exact tags to match):
+${originalHtml}
+
+FLAWED ARABIC TRANSLATION:
+${flawedHtml}`;
+
+      const response = await callWithRetryAndTimeout(
+        () => ai.models.generateContent({
+          model,
+          contents: { parts: [{ text: repairPrompt }] },
+          config: {
+            temperature: 0.0,
+          }
+        }),
+        { timeoutMs: 35000, retries: 1 }
+      );
+
+      const text = response.text?.trim();
+      if (!text) return null;
+      return sanitizeAiHtml(text);
+    } catch (repairErr) {
+      onLog?.(`Tag self-repair attempt failed with ${model}: ${(repairErr as Error).message}`, 'WARNING');
+      return null;
+    }
+  },
+
   async translateHtml(
     html: string,
     onLog?: LoggerCallback,
@@ -154,10 +320,9 @@ Rules:
     const activeTemperature = mode === 'second_mode' ? SECOND_MODE_TEMPERATURE : 0.3;
     const modelsToTry = mode === 'second_mode'
       ? SECOND_MODE_MODELS
-      : ['gemini-flash-latest', 'gemini-3.7-flash'  /* , 'gemini-flash-lite-latest'  */ ];
+      : ['gemini-flash-latest', 'gemini-3.7-flash'];
 
-    let lastError: Error | null = null;
-    let quotaError: Error | null = null;
+    const failureReports: ModelFailureReport[] = [];
 
     for (const model of modelsToTry) {
       try {
@@ -201,29 +366,97 @@ Rules:
           throw new Error("Empty response from AI");
         }
 
-        const cleanHtml = translatedText.replace(/^```html/, '').replace(/```$/, '').trim();
+        let cleanHtml = sanitizeAiHtml(translatedText);
 
-        if (!this.validateIntegrity(html, cleanHtml, onLog)) {
-          throw new Error("Integrity Check Failed: Tag mismatch.");
+        // 1. Refusal / Policy Disclaimer check:
+        // Do NOT attempt tag repair on a refusal! Attempting tag repair on a refusal would embed AI refusals into book tags.
+        const refusalCheck = isAiRefusalOrCommentary(cleanHtml);
+        if (refusalCheck.isRefusal) {
+          throw new TranslationRefusalError(`AI Refusal: ${refusalCheck.reason} ("${cleanHtml.slice(0, 100)}...")`);
         }
 
-        onLog?.("Translation successful.", 'SUCCESS');
+        // 2. Language Verification: Did the model actually output Arabic?
+        const origPlainText = stripHtmlToPlainText(html);
+        const transPlainText = stripHtmlToPlainText(cleanHtml);
+        const origHasText = origPlainText.length > 15 && /[a-zA-Z]{3,}/.test(origPlainText);
+
+        if (origHasText && !hasArabicCharacters(transPlainText)) {
+          throw new TranslationRefusalError(`Model returned untranslated non-Arabic output instead of Arabic translation: "${cleanHtml.slice(0, 100)}..."`);
+        }
+
+        // 3. Tag Integrity Check & Safe Self-Repair:
+        // Because cleanHtml is verified to contain real Arabic translation text, we can safely attempt tag repair if tags are slightly mismatched.
+        if (!this.validateIntegrity(html, cleanHtml, onLog)) {
+          onLog?.(`Model ${model} returned tag mismatch on Arabic translation. Attempting self-repair pass...`, 'WARNING');
+          const repaired = await this.repairHtmlTags(ai, model, html, cleanHtml, onLog);
+          if (repaired && this.validateIntegrity(html, repaired, onLog)) {
+            onLog?.(`Tag mismatch successfully repaired for ${model}! Integrity verified.`, 'SUCCESS');
+            cleanHtml = repaired;
+          } else {
+            throw new TranslationIntegrityError(`Integrity Check Failed: Tag mismatch from ${model}.`, []);
+          }
+        }
+
+        onLog?.(`Translation successful using ${model}.`, 'SUCCESS');
         return cleanHtml;
 
       } catch (error) {
-        console.warn(`Translation failed with ${model}:`, error);
+        console.warn(`Translation attempt failed with ${model}:`, error);
         const err = error as Error;
-        lastError = err;
-        if (isQuotaError(err)) {
-          quotaError = err;
-        }
-        onLog?.(`Model ${model} failed: ${err.message}. Switching models...`, 'WARNING');
+        const isQuota = isQuotaError(err);
+        const isIntegrity = Boolean((err as any).isIntegrity) || err.message?.toLowerCase().includes('tag mismatch');
+        const isRefusal = Boolean((err as any).isRefusal) || err.message?.toLowerCase().includes('refusal') || err.message?.toLowerCase().includes('non-arabic');
+
+        failureReports.push({
+          model,
+          error: err,
+          isQuota,
+          isIntegrity,
+          isRefusal,
+          message: err.message,
+        });
+
+        const failureType = isQuota ? 'API 429 Quota' : isRefusal ? 'AI Refusal/Non-Arabic' : isIntegrity ? 'Tag Mismatch' : err.message;
+        onLog?.(`Model ${model} failed (${failureType}). Switching models...`, 'WARNING');
       }
     }
 
-    onLog?.("All models failed to translate segment.", 'ERROR');
-    // Preserve 429 quota error if any model in the chain failed due to quota exhaustion
-    throw quotaError || lastError || new Error("Translation failed on all available models.");
+    onLog?.("All models in chain completed attempts.", 'ERROR');
+
+    // Industry Best Practice Decision:
+    // Only output / treat as Quota Hit if ALL attempted models failed due to quota (429/resource_exhausted).
+    const allModelsHitQuota = failureReports.length > 0 && failureReports.every(f => f.isQuota);
+
+    if (allModelsHitQuota) {
+      const quotaDetails = failureReports.map(f => `${f.model} (429 Quota)`).join(', ');
+      onLog?.(`API Quota hit on all models (${quotaDetails}). System will pause.`, 'ERROR');
+      throw new AllModelsQuotaError(`API Quota hit on all models: ${quotaDetails}`, failureReports);
+    }
+
+    // If NOT all models hit quota:
+    // The failure of this segment is an INTEGRITY / refusal / formatting failure, NOT an all-models quota exhaustion!
+    const integrityReport = failureReports.find(f => f.isIntegrity);
+    const refusalReport = failureReports.find(f => f.isRefusal);
+    const quotaReport = failureReports.find(f => f.isQuota);
+
+    let compositeMsg: string;
+    if (refusalReport && quotaReport) {
+      compositeMsg = `Translation Rejected: AI Refusal/Non-Arabic output on ${refusalReport.model}; ${quotaReport.model} hit 429 quota.`;
+    } else if (refusalReport) {
+      compositeMsg = `Translation Rejected: AI model returned refusal or non-Arabic output (${refusalReport.message}).`;
+    } else if (integrityReport && quotaReport) {
+      compositeMsg = `Integrity Check Failed: Tag mismatch on ${integrityReport.model}; ${quotaReport.model} hit 429 quota.`;
+    } else if (integrityReport) {
+      compositeMsg = `Integrity Check Failed: Tag mismatch (${integrityReport.message}).`;
+    } else {
+      compositeMsg = `Translation failed across models: ${failureReports.map(f => `${f.model} (${f.message})`).join('; ')}`;
+    }
+
+    onLog?.(`Segment translation failed (non-quota): ${compositeMsg}. Worker will proceed.`, 'WARNING');
+    if (refusalReport) {
+      throw new TranslationRefusalError(compositeMsg, failureReports);
+    }
+    throw new TranslationIntegrityError(compositeMsg, failureReports);
   },
 
   async extractInitialBookGlossary(
@@ -273,7 +506,7 @@ Include:
 Return a JSON array of objects.`;
 
     const modelsToTry = ['gemini-flash-latest', 'gemini-3.7-flash', 'gemini-flash-lite-latest'];
-    let quotaError: Error | null = null;
+    const scanAttempts: { model: string; isQuota: boolean; error: Error }[] = [];
 
     for (const model of modelsToTry) {
       try {
@@ -359,17 +592,17 @@ Return a JSON array of objects.`;
         return { terms, succeeded: true, quotaExhausted: false };
       } catch (err) {
         console.warn(`Glossary extraction with ${model} failed:`, err);
-        if (isQuotaError(err)) {
-          quotaError = err as Error;
-        }
+        const isQuota = isQuotaError(err);
+        scanAttempts.push({ model, isQuota, error: err as Error });
         onLog?.(`Glossary scan attempt with ${model} failed: ${(err as Error).message}. Switching models...`, 'WARNING');
       }
     }
 
+    const allScanModelsHitQuota = scanAttempts.length > 0 && scanAttempts.every(a => a.isQuota);
     return {
       terms: [],
       succeeded: false,
-      quotaExhausted: Boolean(quotaError),
+      quotaExhausted: allScanModelsHitQuota,
     };
   },
 
@@ -496,25 +729,40 @@ If there are no notable new terms, return an empty array [].`;
   },
 
   validateIntegrity(original: string, translated: string, onLog?: LoggerCallback): boolean {
-    const getTags = (str: string) => {
-      return (str.match(/<\/?\w+/g) || []).sort();
+    const getNormalizedTags = (str: string) => {
+      // Matches opening and closing HTML tags: e.g. <p>, </div>, <span class="...">
+      const matches = str.match(/<\/?([a-zA-Z0-9]+)[^>]*>/g) || [];
+      return matches
+        .map(rawTag => {
+          const isClosing = rawTag.startsWith('</');
+          const nameMatch = rawTag.match(/<\/?([a-zA-Z0-9]+)/);
+          const name = nameMatch ? nameMatch[1].toLowerCase() : '';
+          return isClosing ? `</${name}>` : `<${name}>`;
+        })
+        .sort();
     };
 
-    const originalTags = getTags(original);
-    const translatedTags = getTags(translated);
+    const originalTags = getNormalizedTags(original);
+    const translatedTags = getNormalizedTags(translated);
 
     if (originalTags.length !== translatedTags.length) {
-      const msg = `Tag count mismatch. Orig: ${originalTags.length}, Trans: ${translatedTags.length}`;
-      console.warn(msg);
-      onLog?.("Integrity check warning", 'WARNING', { message: msg, originalTags, translatedTags });
+      const msg = `Tag count mismatch. Expected: ${originalTags.length} tags, Received: ${translatedTags.length} tags`;
+      console.warn(msg, { originalTags, translatedTags });
+      onLog?.("Integrity check warning: Tag count mismatch", 'WARNING', {
+        message: msg,
+        expectedTagsCount: originalTags.length,
+        receivedTagsCount: translatedTags.length,
+        originalSample: originalTags.slice(0, 8),
+        translatedSample: translatedTags.slice(0, 8)
+      });
       return false;
     }
 
     for (let i = 0; i < originalTags.length; i++) {
       if (originalTags[i] !== translatedTags[i]) {
-        const msg = `Tag mismatch at index ${i}: ${originalTags[i]} vs ${translatedTags[i]}`;
+        const msg = `Tag mismatch at position ${i}: Expected ${originalTags[i]} but received ${translatedTags[i]}`;
         console.warn(msg);
-        onLog?.("Integrity check warning", 'WARNING', { message: msg });
+        onLog?.("Integrity check warning: Tag structure mismatch", 'WARNING', { message: msg });
         return false;
       }
     }

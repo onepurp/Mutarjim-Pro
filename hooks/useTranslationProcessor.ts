@@ -199,7 +199,7 @@ export const useTranslationProcessor = (
                             isQuotaHit = true;
                             discoveryQueueRef.current = [];
                             setAppState(AppState.QUOTA_PAUSED);
-                            addLog("API Quota hit. Pausing.", 'WARNING');
+                            addLog("API Quota hit on all models. Pausing until quota resets.", 'WARNING');
                             playRingSound();
                         }
                         
@@ -212,13 +212,17 @@ export const useTranslationProcessor = (
                         break;
                     }
 
+                    // Non-quota error (e.g. Tag mismatch, safety filter, etc.):
+                    // Do NOT pause the entire processor! The worker continues processing the next segments.
                     segment.status = SegmentStatus.FAILED;
-                    segment.error = err.message;
+                    segment.error = err.message || 'Translation failed';
                     segment.retryCount = (segment.retryCount || 0) + 1;
                     
                     if (segment.retryCount >= 3) {
                         segment.status = SegmentStatus.SKIPPED;
-                        addLog(`Segment ${segment.id} skipped (max retries).`, 'WARNING');
+                        addLog(`Segment ${segment.id} skipped after 3 attempts (${segment.error}). Continuing next segments.`, 'WARNING');
+                    } else {
+                        addLog(`Segment ${segment.id} failed attempt ${segment.retryCount}/3 (${segment.error}). Continuing next segments.`, 'WARNING');
                     }
 
                     await dbService.updateSegment(segment);
