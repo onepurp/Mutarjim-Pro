@@ -60,7 +60,7 @@ Rules:
 5. If the text contains technical terms, keep them in English if appropriate or provide a standard Arabic equivalent.
 6. Preserve all numeric values.`; 
     // const SECOND_MODE_MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite']; 
-    const SECOND_MODE_MODELS = ['gemini-3-flash-preview', 'gemini-2.5-pro']; 
+    const SECOND_MODE_MODELS = ['gemini-2.5-pro', 'gemini-pro-latest', 'gemini-flash-latest', 'gemini-flash-lite-latest']; 
 
     const SECOND_MODE_TEMPERATURE = 1; 
     // ---------------------------------
@@ -69,7 +69,7 @@ Rules:
     const activeTemperature = mode === 'second_mode' ? SECOND_MODE_TEMPERATURE : 0.3;
     const modelsToTry = mode === 'second_mode' 
       ? SECOND_MODE_MODELS 
-      : ['gemini-3.5-flash', 'gemini-3-flash-preview',  'gemini-3-pro-preview', 'gemini-3.1-pro-preview'];
+      : ['gemini-pro-latest', 'gemini-flash-latest', 'gemini-3.7-flash'];
 
     let lastError: Error | null = null;
 
@@ -143,7 +143,7 @@ Rules:
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const response = await callWithRetryAndTimeout(
         () => ai.models.generateContent({
-            model: 'gemini-3.5-flash',
+            model: 'gemini-flash-latest',
             contents: { parts: [{ text: `Translate this book title into Arabic. Return ONLY the Arabic title, no other text. Title: "${title}"` }] },
         }),
         { timeoutMs: 30000, retries: 2, delayMs: 2000 }

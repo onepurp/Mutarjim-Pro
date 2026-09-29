@@ -16,16 +16,54 @@ interface MutarjimDB extends DBSchema {
 const DB_NAME = 'mutarjim-pro-db';
 const PROJECT_KEY = 'current-project';
 
-let dbPromise: Promise<IDBPDatabase<MutarjimDB>>;
+let dbPromise: Promise<IDBPDatabase<MutarjimDB>> | null = null;
+
+const ensureSchema = (db: IDBPDatabase<MutarjimDB>, transaction: any) => {
+  if (!db.objectStoreNames.contains('project')) {
+    db.createObjectStore('project');
+  }
+  const segmentStore = !db.objectStoreNames.contains('segments')
+    ? db.createObjectStore('segments', { keyPath: 'id' })
+    : transaction.objectStore('segments');
+
+  if (!segmentStore.indexNames.contains('by-status')) {
+    segmentStore.createIndex('by-status', 'status');
+  }
+};
+
+const initDB = async (): Promise<IDBPDatabase<MutarjimDB>> => {
+  try {
+    return await openDB<MutarjimDB>(DB_NAME, 3, {
+      upgrade(db, _oldVersion, _newVersion, transaction) {
+        ensureSchema(db, transaction);
+      },
+    });
+  } catch (err: any) {
+    if (err?.name === 'VersionError' || err?.message?.includes('higher version')) {
+      const existingDb = await openDB<MutarjimDB>(DB_NAME);
+      if (
+        existingDb.objectStoreNames.contains('project') &&
+        existingDb.objectStoreNames.contains('segments')
+      ) {
+        return existingDb;
+      }
+      const nextVersion = existingDb.version + 1;
+      existingDb.close();
+      return await openDB<MutarjimDB>(DB_NAME, nextVersion, {
+        upgrade(db, _oldVersion, _newVersion, transaction) {
+          ensureSchema(db, transaction);
+        },
+      });
+    }
+    throw err;
+  }
+};
 
 const getDB = () => {
   if (!dbPromise) {
-    dbPromise = openDB<MutarjimDB>(DB_NAME, 1, {
-      upgrade(db) {
-        db.createObjectStore('project');
-        const segmentStore = db.createObjectStore('segments', { keyPath: 'id' });
-        segmentStore.createIndex('by-status', 'status');
-      },
+    dbPromise = initDB().catch((err) => {
+      dbPromise = null;
+      throw err;
     });
   }
   return dbPromise;
