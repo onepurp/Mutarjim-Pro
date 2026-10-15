@@ -193,7 +193,7 @@ export class EpubProcessor {
             category: 'TOC',
             description: 'No Table of Contents found.',
             recommendation: 'Generate TOC.',
-            autoFixable: false
+            autoFixable: true
         });
     }
 
@@ -212,13 +212,7 @@ export class EpubProcessor {
     return aiResult;
   }
 
-  setFontRecommendations(recommendations: FontRecommendation[]): void {
-    if (this.analysisResult) {
-      this.analysisResult.fontRecommendations = recommendations;
-    }
-  }
-
-  async repair(actions: RepairActions, isRTL: boolean, customFontRecommendations?: FontRecommendation[]): Promise<Blob> {
+  async repair(actions: RepairActions, isRTL: boolean): Promise<Blob> {
     if (!this.zip) throw new Error("No file loaded");
     this.log("Starting repair process...");
 
@@ -227,9 +221,9 @@ export class EpubProcessor {
     const fontRoleMap: Record<string, string> = {}; // role -> familyName
 
     // --- DYNAMIC FONT EMBEDDING ---
-    const recommendations = customFontRecommendations || this.analysisResult?.fontRecommendations;
-    if (actions.embedFonts && recommendations) {
-        this.log("Acquiring fonts based on Book Personality and user preferences...");
+    if (actions.embedFonts && this.analysisResult?.fontRecommendations) {
+        this.log("Acquiring fonts based on Book Personality...");
+        const recommendations = this.analysisResult.fontRecommendations;
         
         for (const rec of recommendations) {
             try {
@@ -356,10 +350,71 @@ export class EpubProcessor {
     }
 
     // 3. Fix TOC
-    if (actions.fixTOC && this.tocPath && this.tocType === 'NAV') {
-       let tocContent = await this.zip.file(this.tocPath)?.async("string") || "";
-       const standardizedToc = await standardizeNavDoc(tocContent, isRTL);
-       this.zip.file(this.tocPath, standardizedToc);
+    if (actions.fixTOC) {
+      if (this.tocPath && this.tocType === 'NAV') {
+         let tocContent = await this.zip.file(this.tocPath)?.async("string") || "";
+         const standardizedToc = await standardizeNavDoc(tocContent, isRTL);
+         this.zip.file(this.tocPath, standardizedToc);
+         this.log(`Standardized NAV TOC at ${this.tocPath}`, 'success');
+      } else if (this.tocPath && this.tocType === 'NCX') {
+         let ncxContent = await this.zip.file(this.tocPath)?.async("string") || "";
+         const parser = new DOMParser();
+         const ncxDoc = parser.parseFromString(ncxContent, "application/xml");
+         this.zip.file(this.tocPath, new XMLSerializer().serializeToString(ncxDoc));
+         this.log(`Validated and preserved NCX TOC at ${this.tocPath}`, 'success');
+      } else if (!this.tocPath) {
+         // Auto-generate missing EPUB3 NAV
+         const opfDir = this.opfPath.substring(0, this.opfPath.lastIndexOf('/') + 1);
+         const navPath = opfDir + "nav.xhtml";
+         const parser = new DOMParser();
+         const opfDoc = parser.parseFromString(this.opfContent, "application/xml");
+         const spineRefs = Array.from(opfDoc.querySelectorAll('spine > itemref'));
+         const manifest = opfDoc.querySelector('manifest');
+
+         let listItemsHtml = '';
+         spineRefs.forEach((ref, index) => {
+           const idref = ref.getAttribute('idref');
+           const item = manifest?.querySelector(`item[id="${idref}"]`);
+           const href = item?.getAttribute('href');
+           if (href && /\.(x?html|htm)$/i.test(href)) {
+             const label = isRTL ? `القسم ${index + 1}` : `Section ${index + 1}`;
+             listItemsHtml += `      <li><a href="${href}">${label}</a></li>\n`;
+           }
+         });
+
+         const navContent = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${isRTL ? 'ar' : 'en'}" xml:lang="${isRTL ? 'ar' : 'en'}" dir="${isRTL ? 'rtl' : 'ltr'}">
+<head>
+  <meta charset="utf-8" />
+  <title>Table of Contents</title>
+</head>
+<body dir="${isRTL ? 'rtl' : 'ltr'}">
+  <nav epub:type="toc" id="toc" role="doc-toc" dir="${isRTL ? 'rtl' : 'ltr'}">
+    <h1>${isRTL ? 'فهرس المحتويات' : 'Table of Contents'}</h1>
+    <ol>
+${listItemsHtml}    </ol>
+  </nav>
+</body>
+</html>`;
+
+         this.zip.file(navPath, navContent);
+
+         if (manifest) {
+           const navItem = opfDoc.createElementNS("http://www.idpf.org/2007/opf", "item");
+           navItem.setAttribute('id', 'nav');
+           navItem.setAttribute('href', 'nav.xhtml');
+           navItem.setAttribute('properties', 'nav');
+           navItem.setAttribute('media-type', 'application/xhtml+xml');
+           manifest.appendChild(navItem);
+
+           this.opfContent = new XMLSerializer().serializeToString(opfDoc);
+           this.zip.file(this.opfPath, this.opfContent);
+           this.tocPath = navPath;
+           this.tocType = 'NAV';
+           this.log("Generated missing EPUB3 Navigation Document (nav.xhtml)", 'success');
+         }
+      }
     }
 
     // 4. Missing Tags

@@ -1,5 +1,5 @@
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold, Type } from "@google/genai";
-import { LogType, GlossaryTerm, GlossaryCategory, Segment } from '../types';
+import { LogType, GlossaryTerm, GlossaryCategory, Segment, TocTranslationResult } from '../types';
 import { callWithRetryAndTimeout } from '../lib/aiUtils';
 import { normalizeGlossaryKey } from './db';
 
@@ -939,6 +939,208 @@ If there are no notable new terms, return an empty array [].`;
     );
 
     return response.text?.trim() || "";
+  },
+
+  async translateTocTitles(
+    items: { id: string; title: string }[],
+    bookTitle?: string,
+    onLog?: LoggerCallback,
+    glossary?: GlossaryTerm[]
+  ): Promise<TocTranslationResult> {
+    if (!process.env.GEMINI_API_KEY) throw new Error("API Key is missing.");
+    if (items.length === 0) {
+      return { translatedTitles: {}, discoveredTerms: [], enforcedTermCount: 0 };
+    }
+
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const modelsToTry = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.7-flash'];
+
+    const cleanJson = (raw: string): string => {
+      let cleaned = raw.trim();
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '').trim();
+      }
+      return cleaned;
+    };
+
+    // Track existing glossary keys to prevent duplicates
+    const existingGlossaryKeys = new Set((glossary || []).map(g => g.id.toLowerCase().trim()));
+    const enforcedTermKeys = new Set<string>();
+    const allDiscoveredTerms: GlossaryTerm[] = [];
+
+    // Process in chunks of 25 to prevent truncation or output token exhaustion
+    const CHUNK_SIZE = 25;
+    const finalMap: Record<string, string> = {};
+
+    for (let c = 0; c < items.length; c += CHUNK_SIZE) {
+      const chunk = items.slice(c, c + CHUNK_SIZE);
+      const inputData = chunk.map(item => ({ id: item.id, title: item.title }));
+
+      // Match glossary terms specifically appearing in this chunk's titles
+      const chunkTitlesText = chunk.map(item => item.title).join(' \n ');
+      const matchedGlossary = matchGlossaryTermsForHtml(chunkTitlesText, glossary || []);
+      for (const term of matchedGlossary) {
+        enforcedTermKeys.add(term.id);
+      }
+
+      const glossaryBlock = matchedGlossary.length > 0 ? formatGlossaryBlock(matchedGlossary) : '';
+
+      const prompt = `You are a specialist literary Arabic translator working on the Table of Contents for the book "${bookTitle || 'Book'}".
+Translate the following chapter/section titles into natural, prestigious, eloquent literary Arabic.
+Maintain the exact IDs provided.
+
+RULES & INSTRUCTIONS:
+1. Translate titles with literary elegance and high grammatical precision (e.g., "Chapter 1:" ➔ "الفصل الأول:", "Book II:" ➔ "الكتاب الثاني:", "Prologue" ➔ "المقدمة", "Epilogue" ➔ "الخاتمة").
+2. ${glossaryBlock ? `${glossaryBlock}\nCRITICAL: Strictly adhere to the established glossary translations above when translating any names, places, or recurring concepts present in these titles.` : 'Maintain stylistic consistency across titles.'}
+3. Identify any NOVEL recurring proper nouns (character names, fictional/real locations, fantasy realms), distinctive historical/fantasy titles/ranks, or specialized recurring terminology present in these chapter titles that are NOT already in the glossary list. Return them in the "discoveredTerms" array. If there are none, return an empty array [].
+
+Return a JSON object containing:
+- "translations": array of objects with "id" and "arabicTitle"
+- "discoveredTerms": array of objects with "source", "target", "category" (one of: 'character', 'location', 'title', 'concept'), and optional "notes"`;
+
+      let chunkSuccess = false;
+
+      for (const model of modelsToTry) {
+        try {
+          const response = await callWithRetryAndTimeout(
+            () => ai.models.generateContent({
+              model,
+              contents: {
+                parts: [
+                  { text: prompt },
+                  { text: JSON.stringify(inputData) }
+                ]
+              },
+              config: {
+                temperature: 0.15,
+                responseMimeType: "application/json",
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    translations: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          id: { type: Type.STRING },
+                          arabicTitle: { type: Type.STRING }
+                        },
+                        required: ["id", "arabicTitle"]
+                      }
+                    },
+                    discoveredTerms: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          source: { type: Type.STRING },
+                          target: { type: Type.STRING },
+                          category: { type: Type.STRING },
+                          notes: { type: Type.STRING }
+                        },
+                        required: ["source", "target", "category"]
+                      }
+                    }
+                  },
+                  required: ["translations"]
+                }
+              }
+            }),
+            { timeoutMs: 45000, retries: 2, delayMs: 1500 }
+          );
+
+          if (response.text) {
+            const raw = cleanJson(response.text);
+            const parsed = JSON.parse(raw);
+            let count = 0;
+
+            // Extract translations
+            let titleList: any[] = [];
+            if (Array.isArray(parsed)) {
+              titleList = parsed;
+            } else if (parsed && typeof parsed === 'object') {
+              if (Array.isArray(parsed.translations)) {
+                titleList = parsed.translations;
+              } else if (Array.isArray(parsed.items)) {
+                titleList = parsed.items;
+              } else if (Array.isArray(parsed.titles)) {
+                titleList = parsed.titles;
+              }
+            }
+
+            for (const entry of titleList) {
+              if (entry && entry.id && entry.arabicTitle) {
+                finalMap[entry.id] = String(entry.arabicTitle).trim();
+                count++;
+              }
+            }
+
+            // Extract discovered terms
+            if (parsed && typeof parsed === 'object' && Array.isArray(parsed.discoveredTerms)) {
+              const now = Date.now();
+              for (const item of parsed.discoveredTerms) {
+                if (!item?.source || !item?.target) continue;
+                const src = String(item.source).trim();
+                const trg = String(item.target).trim();
+                const key = normalizeGlossaryKey(src);
+                if (!key || key.length < 2 || existingGlossaryKeys.has(key)) continue;
+                existingGlossaryKeys.add(key);
+
+                const newTerm: GlossaryTerm = {
+                  id: key,
+                  source: src,
+                  target: trg,
+                  category: normalizeCategory(item.category),
+                  notes: item.notes ? String(item.notes).trim() : 'Harvested from Chapter Title',
+                  sourceType: 'auto-live',
+                  createdAt: now
+                };
+                allDiscoveredTerms.push(newTerm);
+              }
+            }
+
+            if (count > 0) {
+              chunkSuccess = true;
+              const termLog = matchedGlossary.length > 0 ? ` (enforced ${matchedGlossary.length} glossary terms)` : '';
+              onLog?.(`Translated batch of ${count} chapter titles using ${model}${termLog}.`, 'SUCCESS');
+              break;
+            }
+          }
+        } catch (err) {
+          console.warn(`TOC translation with ${model} failed:`, err);
+          onLog?.(`TOC translation batch with ${model} failed: ${(err as Error).message}. Trying fallback...`, 'WARNING');
+        }
+      }
+
+      // If chunk translation failed on all models, fallback to quick individual translation
+      if (!chunkSuccess) {
+        for (const item of chunk) {
+          if (!finalMap[item.id]) {
+            try {
+              const single = await this.translateTitle(item.title);
+              if (single) {
+                finalMap[item.id] = single;
+              }
+            } catch (e) {
+              // Keep original title as last resort
+              finalMap[item.id] = item.title;
+            }
+          }
+        }
+      }
+    }
+
+    if (allDiscoveredTerms.length > 0) {
+      onLog?.(`Automatically harvested ${allDiscoveredTerms.length} new glossary term(s) from chapter titles.`, 'INFO', {
+        terms: allDiscoveredTerms.map(t => `${t.source} -> ${t.target}`)
+      });
+    }
+
+    return {
+      translatedTitles: finalMap,
+      discoveredTerms: allDiscoveredTerms,
+      enforcedTermCount: enforcedTermKeys.size,
+    };
   },
 
   validateIntegrity(original: string, translated: string, onLog?: LoggerCallback): boolean {

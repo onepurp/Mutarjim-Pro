@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Upload, Book, BookOpen, Play, Pause, Download, Save, FolderOpen, Image as ImageIcon, ChevronRight, ChevronLeft, RefreshCw, Globe, LogOut, Type, Minus, Plus, AlignLeft, AlignCenter, AlignRight, AlignJustify, Wand2, Moon, Sun, PanelLeftClose, PanelLeftOpen, AlertTriangle } from 'lucide-react';
-import { AppState, ProjectData, Segment, SegmentStatus, SystemLogEntry, LogType, AIDebugLogEntry, ExportSettings, ArchitectAnalysisResult, GlossaryTerm } from './types';
+import { Upload, Book, BookOpen, Play, Pause, Download, Save, FolderOpen, Image as ImageIcon, ChevronRight, ChevronLeft, RefreshCw, Globe, LogOut, Type, Minus, Plus, AlignLeft, AlignCenter, AlignRight, AlignJustify, Wand2, Moon, Sun, PanelLeftClose, PanelLeftOpen, AlertTriangle, ListTree } from 'lucide-react';
+import { AppState, ProjectData, Segment, SegmentStatus, SystemLogEntry, LogType, AIDebugLogEntry, ExportSettings, ArchitectAnalysisResult, GlossaryTerm, TocItem } from './types';
 import { dbService } from './services/db';
 import { epubService } from './services/epubService';
 import { EpubProcessor } from './services/architectService';
@@ -10,6 +10,8 @@ import { useTranslationProcessor } from './hooks/useTranslationProcessor';
 import { Button, ProgressBar, Badge, Spinner, SegmentMap, Console, Modal, Input, Label, SplitView } from './components/ui';
 import { AnalysisReport } from './components/AnalysisReport';
 import { GlossaryModal } from './components/GlossaryModal';
+import { ChapterDrawer } from './components/ChapterDrawer';
+import { TocModal } from './components/TocModal';
 
 function useDarkMode() {
   const [isDark, setIsDark] = useState(() => {
@@ -46,6 +48,7 @@ const App = () => {
   const [glossary, setGlossary] = useState<GlossaryTerm[]>([]);
   const glossaryRef = useRef<GlossaryTerm[]>([]);
   const [isGlossaryModalOpen, setIsGlossaryModalOpen] = useState(false);
+  const [isTocModalOpen, setIsTocModalOpen] = useState(false);
   const [isScanningGlossary, setIsScanningGlossary] = useState(false);
   const [systemLogs, setSystemLogs] = useState<SystemLogEntry[]>([]);
   const [aiLogs, setAiLogs] = useState<AIDebugLogEntry[]>([]);
@@ -125,6 +128,46 @@ const App = () => {
               const segs = await dbService.getAllSegments();
               segmentsRef.current = segs;
               setSegments(segs);
+
+              // Auto-detect or refresh Table of Contents if missing or if all indices are 0
+              const hasToc = proj.toc && proj.toc.length > 0;
+              const isAllZero = hasToc && proj.toc!.length > 1 && proj.toc!.every(t => t.segmentIndex === 0);
+
+              if ((!hasToc || isAllZero) && proj.sourceEpubBlob instanceof Blob && segs.length > 0) {
+                  try {
+                      const recoveredToc = await epubService.extractTocFromBlob(proj.sourceEpubBlob, segs);
+                      if (recoveredToc && recoveredToc.length > 0) {
+                          if (proj.toc && proj.toc.length > 0) {
+                              const oldMap = new Map<string, string>();
+                              const collectOld = (items: TocItem[]) => {
+                                  for (const it of items) {
+                                      if (it.arabicTitle) oldMap.set(it.title.trim().toLowerCase(), it.arabicTitle);
+                                      if (it.id && it.arabicTitle) oldMap.set(it.id, it.arabicTitle);
+                                      if (it.subItems) collectOld(it.subItems);
+                                  }
+                              };
+                              collectOld(proj.toc);
+
+                              const restoreArabic = (items: TocItem[]) => {
+                                  for (const it of items) {
+                                      const prev = oldMap.get(it.id) || oldMap.get(it.title.trim().toLowerCase());
+                                      if (prev && !it.arabicTitle) it.arabicTitle = prev;
+                                      if (it.subItems) restoreArabic(it.subItems);
+                                  }
+                              };
+                              restoreArabic(recoveredToc);
+                          }
+
+                          proj.toc = recoveredToc;
+                          await dbService.saveProject(proj);
+                          addLog(`Auto-detected Table of Contents with ${recoveredToc.length} chapters.`, 'SUCCESS');
+                      }
+                  } catch (tocErr) {
+                      console.warn("Failed retroactive TOC extraction:", tocErr);
+                  }
+              }
+
+              setProject(proj);
 
               const loadedGlossary = await dbService.getGlossary();
               glossaryRef.current = loadedGlossary;
@@ -217,16 +260,22 @@ const App = () => {
                   author: updatedProject.author, 
                   originalTitle: updatedProject.title,
                   schemaVersion: updatedProject.schemaVersion,
-                  exportSettings: updatedProject.exportSettings
+                  exportSettings: updatedProject.exportSettings,
+                  toc: updatedProject.toc,
+                  glossary: glossaryRef.current
               }
           );
+          // Persist any auto-enriched TOC Arabic titles back to the project state and DB
+          await dbService.saveProject(updatedProject);
+          setProject({ ...updatedProject });
+
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
           const arabicTitle = updatedProject.arabicTitle || "Translated Book";
           a.download = `${arabicTitle} (مترجم) [Arabic Translation] [${updatedProject.title} - ${updatedProject.author}].epub`;
           a.click();
-          addLog("Export complete.", 'SUCCESS');
+          addLog("Export complete with Arabic Table of Contents.", 'SUCCESS');
       } catch (e) {
           addLog("Export failed: " + (e as Error).message, 'ERROR');
       }
@@ -349,6 +398,18 @@ const App = () => {
       };
   }, [addLog]);
 
+  const handleGlossaryTermsDiscovered = useCallback(async (newTerms: GlossaryTerm[]) => {
+      if (!newTerms || newTerms.length === 0) return;
+      try {
+          const merged = await dbService.saveGlossaryTerms(newTerms, false);
+          glossaryRef.current = merged;
+          setGlossary(merged);
+          addLog(`Added ${newTerms.length} new glossary term(s) automatically from chapter titles.`, 'SUCCESS');
+      } catch (err: any) {
+          addLog(`Failed to auto-save glossary terms from TOC: ${err.message}`, 'WARNING');
+      }
+  }, [addLog]);
+
   const [isMicroSegmenting, setIsMicroSegmenting] = useState(false);
   const dbUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -368,6 +429,56 @@ const App = () => {
           dbService.updateSegment(updatedSegment);
       }, 500);
   }, [activeSegmentIndex]);
+
+  const handleSaveToc = useCallback(async (updatedToc: TocItem[]) => {
+      if (!project) return;
+      const updatedProj: ProjectData = { ...project, toc: updatedToc };
+      await dbService.saveProject(updatedProj);
+      setProject(updatedProj);
+      addLog(`Table of Contents saved (${updatedToc.length} chapters).`, 'SUCCESS');
+  }, [project, addLog]);
+
+  const [isRescanningToc, setIsRescanningToc] = useState(false);
+
+  const handleRescanToc = useCallback(async () => {
+      if (!project || !(project.sourceEpubBlob instanceof Blob)) return;
+      setIsRescanningToc(true);
+      addLog("Re-scanning Table of Contents from source EPUB...", 'INFO');
+      try {
+          const segs = segmentsRef.current.length > 0 ? segmentsRef.current : await dbService.getAllSegments();
+          const newToc = await epubService.extractTocFromBlob(project.sourceEpubBlob, segs);
+          
+          if (project.toc && project.toc.length > 0) {
+              const oldMap = new Map<string, string>();
+              const collectOld = (items: TocItem[]) => {
+                  for (const it of items) {
+                      if (it.arabicTitle) oldMap.set(it.title.trim().toLowerCase(), it.arabicTitle);
+                      if (it.id && it.arabicTitle) oldMap.set(it.id, it.arabicTitle);
+                      if (it.subItems) collectOld(it.subItems);
+                  }
+              };
+              collectOld(project.toc);
+
+              const restoreArabic = (items: TocItem[]) => {
+                  for (const it of items) {
+                      const prev = oldMap.get(it.id) || oldMap.get(it.title.trim().toLowerCase());
+                      if (prev && !it.arabicTitle) it.arabicTitle = prev;
+                      if (it.subItems) restoreArabic(it.subItems);
+                  }
+              };
+              restoreArabic(newToc);
+          }
+
+          const updated = { ...project, toc: newToc };
+          setProject(updated);
+          await dbService.saveProject(updated);
+          addLog(`Re-scanned and synchronized ${newToc.length} chapters.`, 'SUCCESS');
+      } catch (err: any) {
+          addLog(`Failed to re-scan Table of Contents: ${err.message}`, 'ERROR');
+      } finally {
+          setIsRescanningToc(false);
+      }
+  }, [project, addLog]);
 
   const handleMarkActiveSegmentTranslated = useCallback(async () => {
       const segment = segmentsRef.current[activeSegmentIndex];
@@ -394,8 +505,45 @@ const App = () => {
               await dbService.saveProject(updatedProj);
           }
       }
+
+      // Automatically sync TOC chapter title if this segment contains a chapter heading
+      if (project?.toc && updatedSegment.translatedHtml) {
+          const headingMatch = updatedSegment.translatedHtml.match(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/i);
+          if (headingMatch && headingMatch[1].trim()) {
+              const cleanArabicHeading = headingMatch[1].replace(/<[^>]+>/g, '').trim();
+              if (cleanArabicHeading.length > 0 && cleanArabicHeading.length < 120) {
+                  const updateTocWithHeading = (items: TocItem[]): { updated: boolean; newItems: TocItem[] } => {
+                      let changed = false;
+                      const newItems = items.map(item => {
+                          if (item.segmentIndex === activeSegmentIndex && !item.arabicTitle) {
+                              changed = true;
+                              return { ...item, arabicTitle: cleanArabicHeading };
+                          }
+                          if (item.subItems) {
+                              const res = updateTocWithHeading(item.subItems);
+                              if (res.updated) {
+                                  changed = true;
+                                  return { ...item, subItems: res.newItems };
+                              }
+                          }
+                          return item;
+                      });
+                      return { updated: changed, newItems };
+                  };
+
+                  const res = updateTocWithHeading(project.toc);
+                  if (res.updated) {
+                      const updatedProj = { ...project, toc: res.newItems };
+                      await dbService.saveProject(updatedProj);
+                      setProject(updatedProj);
+                      addLog(`TOC chapter title auto-synced: "${cleanArabicHeading}"`, 'INFO');
+                  }
+              }
+          }
+      }
+
       addLog(`Segment ${activeSegmentIndex + 1} marked as translated.`, 'SUCCESS');
-  }, [activeSegmentIndex, addLog]);
+  }, [activeSegmentIndex, project, addLog]);
 
   const handleCopySourceTagsToActiveSegment = useCallback(() => {
       const segment = segmentsRef.current[activeSegmentIndex];
@@ -644,11 +792,7 @@ const App = () => {
         embedFonts: true,
       };
 
-      const fixedBlob = await processorRef.current.repair(
-        actions, 
-        architectResult.isRTL, 
-        architectResult.fontRecommendations
-      );
+      const fixedBlob = await processorRef.current.repair(actions, architectResult.isRTL);
       
       const updatedProject = { ...project, sourceEpubBlob: fixedBlob };
       await dbService.saveProject(updatedProject);
@@ -783,6 +927,17 @@ const App = () => {
                                   <Save className="w-4 h-4 mr-2" /> Backup Project
                               </Button>
                           </div>
+
+                          {/* Table of Contents Drawer */}
+                          {project.toc && project.toc.length > 0 && (
+                              <ChapterDrawer
+                                  toc={project.toc}
+                                  segments={segments}
+                                  activeSegmentIndex={activeSegmentIndex}
+                                  onSelectSegment={(idx) => setActiveSegmentIndex(idx)}
+                                  onOpenTocModal={() => setIsTocModalOpen(true)}
+                              />
+                          )}
                           
                           {/* Minimap */}
                           <div className="flex-1 min-h-[120px] border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900/50 p-2">
@@ -824,6 +979,16 @@ const App = () => {
                                   title={`Book Glossary (${glossary.length} terms)`}
                               >
                                   <BookOpen className="w-4 h-4 text-sky-500" />
+                              </Button>
+
+                              <Button
+                                  variant="secondary"
+                                  size="icon"
+                                  className="w-10 h-10 rounded-full"
+                                  onClick={() => setIsTocModalOpen(true)}
+                                  title={`Table of Contents (${project.toc?.length || 0} chapters)`}
+                              >
+                                  <ListTree className="w-4 h-4 text-sky-500" />
                               </Button>
                               
                               {skippedCount > 0 && appState !== AppState.TRANSLATING && (
@@ -914,6 +1079,22 @@ const App = () => {
                            </span>
                        </Button>
 
+                       {project?.toc && project.toc.length > 0 && (
+                           <Button
+                               variant="secondary"
+                               size="sm"
+                               onClick={() => setIsTocModalOpen(true)}
+                               className="px-2.5 md:px-3 whitespace-nowrap"
+                               title="Open Table of Contents Manager"
+                           >
+                               <ListTree className="w-4 h-4 text-sky-500 md:mr-1.5" />
+                               <span className="hidden md:inline">TOC</span>
+                               <span className="ml-1.5 font-mono tabular-nums text-[11px] text-slate-500 dark:text-slate-400">
+                                   ({project.toc.length})
+                               </span>
+                           </Button>
+                       )}
+
                        {/* Font Controls */}
                        <div className="hidden md:flex items-center bg-slate-100 dark:bg-slate-900 rounded-md p-1 mr-1 border border-slate-200 dark:border-slate-700">
                            <button 
@@ -991,6 +1172,19 @@ const App = () => {
               onSaveTerm={handleSaveGlossaryTerm}
               onDeleteTerm={handleDeleteGlossaryTerm}
               onReplaceAcrossSegments={handleReplaceAcrossSegments}
+          />
+
+          {/* Table of Contents Manager Modal */}
+          <TocModal
+              isOpen={isTocModalOpen}
+              onClose={() => setIsTocModalOpen(false)}
+              toc={project.toc || []}
+              bookTitle={project.title}
+              glossary={glossary}
+              onSaveToc={handleSaveToc}
+              onJumpToSegment={(idx) => setActiveSegmentIndex(idx)}
+              onTermsDiscovered={handleGlossaryTermsDiscovered}
+              addLog={addLog}
           />
 
           {/* Project Settings Modal */}
@@ -1137,6 +1331,39 @@ const App = () => {
                           </div>
                       </div>
 
+                      {/* Table of Contents Section */}
+                      <div className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-700">
+                          <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50 flex items-center justify-between">
+                              <span>Table of Contents</span>
+                              <span className="text-xs font-mono font-normal text-slate-400">
+                                  {project.toc?.length || 0} chapters detected
+                              </span>
+                          </h4>
+                          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                              If chapters are missing or jumping to incorrect segments, you can re-scan and synchronize the Table of Contents directly from the source EPUB file.
+                          </p>
+                          <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={isRescanningToc}
+                              onClick={handleRescanToc}
+                              className="text-xs w-full justify-center"
+                          >
+                              {isRescanningToc ? (
+                                  <>
+                                      <Spinner className="w-3.5 h-3.5 mr-2" />
+                                      Re-scanning Table of Contents...
+                                  </>
+                              ) : (
+                                  <>
+                                      <RefreshCw className="w-3.5 h-3.5 mr-2 text-sky-500" />
+                                      Re-scan & Populate Table of Contents
+                                  </>
+                              )}
+                          </Button>
+                      </div>
+
                       <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
                           <Button variant="secondary" onClick={() => setIsEditModalOpen(false)}>Cancel</Button>
                           <Button onClick={() => {
@@ -1183,12 +1410,6 @@ const App = () => {
                               onRepair={handleRepairEpub} 
                               onCancel={() => setArchitectResult(null)}
                               isRepairing={isAnalyzing}
-                              onUpdateFontRecommendations={(updatedFonts) => {
-                                  setArchitectResult(prev => prev ? { ...prev, fontRecommendations: updatedFonts } : null);
-                                  if (processorRef.current) {
-                                      processorRef.current.setFontRecommendations(updatedFonts);
-                                  }
-                              }}
                           />
                       )}
                   </>

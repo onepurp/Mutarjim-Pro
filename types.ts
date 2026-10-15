@@ -50,6 +50,24 @@ export interface ExportSettings {
   customTemperature?: number;
 }
 
+export interface TocItem {
+  id: string;
+  title: string;
+  arabicTitle?: string;
+  href: string; // original target href e.g. text/part0001.html#ch1 or text/part0001.html
+  fileHref: string; // normalized resolved file href matching segment.fileHref
+  anchorId?: string; // anchor id within the file if any
+  level: number; // 1 for top-level, 2 for nested
+  segmentIndex: number; // first segment index in segments array
+  subItems?: TocItem[];
+}
+
+export interface TocTranslationResult {
+  translatedTitles: Record<string, string>;
+  discoveredTerms: GlossaryTerm[];
+  enforcedTermCount: number;
+}
+
 export interface ProjectData {
   id: string; // usually 'current-project' for single project app
   title: string;
@@ -65,6 +83,7 @@ export interface ProjectData {
   exportSettings?: ExportSettings;
   glossaryInitialized?: boolean;
   glossaryAutoLearn?: boolean;
+  toc?: TocItem[];
 }
 
 export interface AnalysisResult {
@@ -132,9 +151,6 @@ export interface FontRecommendation {
   category: 'serif' | 'sans-serif' | 'display' | 'monospace' | 'handwriting';
   subset: string;
   justification: string;
-  isCustomOverride?: boolean;
-  originalFontFamily?: string;
-  originalKebabName?: string;
 }
 
 export interface TypographyProfile {
